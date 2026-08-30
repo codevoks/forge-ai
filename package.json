@@ -1,0 +1,23 @@
+{
+  "name": "forge-ai",
+  "private": true,
+  "packageManager": "pnpm@10.13.1",
+  "scripts": {
+    "build": "turbo run build",
+    "demo": "node scripts/demo.mjs",
+    "dev": "turbo run dev --parallel",
+    "generate:types": "pnpm --filter @forge/api openapi:export && pnpm --filter @forge/shared-types generate:openapi",
+    "lint": "turbo run lint",
+    "postinstall": "node scripts/setup-python.mjs",
+    "test": "turbo run test",
+    "test:security": "turbo run test:security",
+    "typecheck": "turbo run typecheck",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @forge/api db:migrate",
+    "db:seed": "pnpm --filter @forge/api db:seed"
+  },
+  "devDependencies": {
+    "turbo": "2.6.1"
+  }
+}

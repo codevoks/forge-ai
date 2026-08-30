@@ -1,0 +1,12 @@
+{
+  "name": "@forge/worker",
+  "private": true,
+  "scripts": {
+    "build": "../../.venv/bin/python -m compileall src",
+    "dev": "../../.venv/bin/python -m forge_worker.main",
+    "lint": "../../.venv/bin/ruff check src && ../../.venv/bin/mypy src",
+    "test": "../../.venv/bin/python -m compileall src && ../../.venv/bin/pytest src",
+    "test:security": "../../.venv/bin/python -m compileall src",
+    "typecheck": "../../.venv/bin/mypy src"
+  }
+}

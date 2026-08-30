@@ -1,0 +1,16 @@
+{
+  "name": "@forge/api",
+  "private": true,
+  "scripts": {
+    "build": "../../.venv/bin/python -m compileall src tests",
+    "db:migrate": "../../.venv/bin/python -m forge_api.scripts.migrate",
+    "db:seed": "../../.venv/bin/python -m forge_api.scripts.seed",
+    "dev": "../../.venv/bin/uvicorn forge_api.main:create_app --factory --host 127.0.0.1 --port 8000 --reload",
+    "lint": "../../.venv/bin/ruff check src tests && ../../.venv/bin/mypy src",
+    "openapi:export": "../../.venv/bin/python -m forge_api.scripts.export_openapi",
+    "test": "../../.venv/bin/pytest tests -m 'not security'",
+    "test:security": "../../.venv/bin/pytest tests -m security",
+    "typecheck": "../../.venv/bin/mypy src"
+  },
+  "devDependencies": {}
+}
