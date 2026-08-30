@@ -47,6 +47,7 @@ async function main() {
   console.log("Forge demo is starting with external integrations disabled.");
   console.log("Web:    http://127.0.0.1:3000");
   console.log("API:    http://127.0.0.1:8000/health/ready");
+  console.log("Demo:   choose Alice Admin, create a deterministic run, then advance ready tasks.");
   console.log("Worker: health shell runs at startup in its process logs.");
   console.log("");
 

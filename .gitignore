@@ -25,6 +25,7 @@ __pycache__/
 *.tsbuildinfo
 .venv/
 apps/api/.venv/
+local/
 apps/api/local/
 apps/api/apps/api/local/
 .env

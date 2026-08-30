@@ -11,9 +11,7 @@ def test_ready_reports_zero_cost_profile(client: TestClient) -> None:
     assert response.json()["external_integrations"] == "disabled"
 
 
-def test_authenticated_user_sees_seeded_workspace(
-    client: TestClient, issuer: DevIssuer
-) -> None:
+def test_authenticated_user_sees_seeded_workspace(client: TestClient, issuer: DevIssuer) -> None:
     response = client.get("/v1/me", headers=auth_headers(issuer, "alice"))
 
     assert response.status_code == 200

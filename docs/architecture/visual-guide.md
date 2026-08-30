@@ -158,3 +158,28 @@ flowchart LR
 
 The canonical run and task state diagrams live beside their invariants in the [domain and workflow model](domain-workflow-model.md). The [failure model](failure-model.md) explains what happens at every crash, retry, cancellation, and ambiguous-effect edge.
 
+## Current deterministic workflow execution subset
+
+The current implementation persists immutable workflow versions, instantiates a run-scoped task DAG, evaluates dependency readiness transactionally, and appends execution events beside state transitions. Queue delivery, worker leases, retries, checkpoints, model calls, tools, and approvals remain behind later-phase boundaries.
+
+```mermaid
+flowchart TD
+    WFV[Published WorkflowVersion\nimmutable DAG snapshot]
+    OBJ[Objective\nuser text + constraints]
+    RUN[Run\ncreated -> running -> succeeded]
+    TASKS[Tasks\npending / ready / running / succeeded]
+    DEPS[TaskDependencies\nadjacency rows]
+    EVENTS[ExecutionEvents\nappend-only transition history]
+    TEST[Deterministic advance command\none ready task per call]
+
+    WFV -->|pin version| RUN
+    OBJ -->|snapshot| RUN
+    WFV -->|instantiate steps| TASKS
+    WFV -->|instantiate edges| DEPS
+    RUN --> TASKS
+    TASKS --> DEPS
+    TEST -->|transaction lock| RUN
+    TEST -->|validate transition| TASKS
+    TEST -->|recalculate readiness| DEPS
+    TEST -->|append in same transaction| EVENTS
+```

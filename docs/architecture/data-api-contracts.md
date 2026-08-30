@@ -70,6 +70,22 @@ POST /v1/evaluations; GET /v1/evaluations/{id}
 
 Administrative registration endpoints appear only with their owning phase and capability checks.
 
+Implemented deterministic workflow endpoints currently include:
+
+```text
+GET /v1/workflows
+POST /v1/workflows
+GET /v1/workflows/{workflow_version_id}
+GET /v1/runs
+POST /v1/runs
+GET /v1/runs/{run_id}
+GET /v1/runs/{run_id}/tasks
+GET /v1/runs/{run_id}/events
+POST /v1/runs/{run_id}:advance
+```
+
+`POST /v1/runs/{run_id}:advance` is a deterministic local execution adapter for the current workflow-domain slice. It advances one ready deterministic task through the same persisted run/task/event architecture that later workers will use; it is not a substitute for the queued worker runtime.
+
 ## Asynchronous envelope
 
 Every outbox/queue message has `message_id`, `schema_version`, `type`, `occurred_at`, `tenant_id`, `workspace_id`, `aggregate_type`, `aggregate_id`, `correlation_id`, `causation_id`, `trace_context`, and a minimal payload of durable IDs. Consumers reject unknown major schema versions, validate scope against database state, and deduplicate on `message_id` plus handler name.
@@ -96,4 +112,3 @@ Provider errors are normalized into `invalid_request`, `auth`, `rate_limited`, `
 ## Schema evolution
 
 Database migrations are forward-only and expand/migrate/contract for live changes. Event/job/API payloads carry versions and use tolerant readers within a declared compatibility window. Published workflow/tool/plan versions are immutable. Breaking tool schemas create a new tool version; in-flight runs remain pinned.
-

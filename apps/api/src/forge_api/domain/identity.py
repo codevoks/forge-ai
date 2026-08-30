@@ -14,6 +14,7 @@ class Capability(StrEnum):
     TENANT_ADMIN = "tenant.admin"
     WORKSPACE_ADMIN = "workspace.admin"
     WORKSPACE_READ = "workspace.read"
+    WORKFLOW_PUBLISH = "workflow.publish"
     MEMBER_MANAGE = "member.manage"
     RUN_READ = "run.read"
     RUN_CREATE = "run.create"
@@ -24,6 +25,7 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
         Capability.TENANT_ADMIN,
         Capability.WORKSPACE_ADMIN,
         Capability.WORKSPACE_READ,
+        Capability.WORKFLOW_PUBLISH,
         Capability.MEMBER_MANAGE,
         Capability.RUN_READ,
         Capability.RUN_CREATE,
@@ -31,6 +33,7 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
     Role.WORKSPACE_ADMIN: {
         Capability.WORKSPACE_ADMIN,
         Capability.WORKSPACE_READ,
+        Capability.WORKFLOW_PUBLISH,
         Capability.MEMBER_MANAGE,
         Capability.RUN_READ,
         Capability.RUN_CREATE,

@@ -6,6 +6,8 @@ from forge_api.infrastructure.repositories import IdentityRepository, TenantRepo
 
 TENANT_ID = "018f0000-0000-7000-8000-000000000001"
 WORKSPACE_ID = "018f0000-0000-7000-8000-000000000101"
+WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000201"
+WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000202"
 
 
 def _assert_local_database_url(database_url: str) -> None:
@@ -23,6 +25,16 @@ def main() -> None:
         tenant_id=TENANT_ID,
         actor_id="00000000-0000-0000-0000-000000000000",
     ) as conn:
+        conn.execute("delete from execution_events")
+        conn.execute("delete from task_attempts")
+        conn.execute("delete from task_dependencies")
+        conn.execute("delete from tasks")
+        conn.execute("delete from runs")
+        conn.execute("delete from objectives")
+        conn.execute("delete from workflow_edges")
+        conn.execute("delete from workflow_steps")
+        conn.execute("delete from workflow_versions")
+        conn.execute("delete from workflow_templates")
         conn.execute("delete from security_audit_events")
         conn.execute("delete from idempotency_records")
         conn.execute("delete from memberships")
@@ -74,11 +86,68 @@ def main() -> None:
             """,
             (TENANT_ID, WORKSPACE_ID, bob["id"]),
         )
+        conn.execute(
+            """
+            insert into workflow_templates (id, tenant_id, workspace_id, name, created_by)
+            values (%s, %s, %s, %s, %s)
+            """,
+            (
+                WORKFLOW_TEMPLATE_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                "Incident Response Demo",
+                alice["id"],
+            ),
+        )
+        conn.execute(
+            """
+            insert into workflow_versions
+              (id, tenant_id, workspace_id, template_id, version_number, status, name, created_by)
+            values (%s, %s, %s, %s, 1, 'published', %s, %s)
+            """,
+            (
+                WORKFLOW_VERSION_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                WORKFLOW_TEMPLATE_ID,
+                "Incident Response Demo",
+                alice["id"],
+            ),
+        )
+        steps = [
+            ("collect_logs", "Collect logs", "deterministic"),
+            ("inspect_metrics", "Inspect metrics", "deterministic"),
+            ("correlate", "Correlate evidence", "deterministic"),
+            ("summarize", "Summarize findings", "deterministic"),
+        ]
+        for step_key, name, kind in steps:
+            conn.execute(
+                """
+                insert into workflow_steps
+                  (id, tenant_id, workspace_id, workflow_version_id, step_key, name, kind, input)
+                values (gen_random_uuid(), %s, %s, %s, %s, %s, %s, '{}'::jsonb)
+                """,
+                (TENANT_ID, WORKSPACE_ID, WORKFLOW_VERSION_ID, step_key, name, kind),
+            )
+        edges = [
+            ("collect_logs", "correlate"),
+            ("inspect_metrics", "correlate"),
+            ("correlate", "summarize"),
+        ]
+        for from_step, to_step in edges:
+            conn.execute(
+                """
+                insert into workflow_edges
+                  (id, tenant_id, workspace_id, workflow_version_id, from_step_key, to_step_key)
+                values (gen_random_uuid(), %s, %s, %s, %s, %s)
+                """,
+                (TENANT_ID, WORKSPACE_ID, WORKFLOW_VERSION_ID, from_step, to_step),
+            )
         TenantRepository(conn).audit(
             "local.seeded",
             TENANT_ID,
             str(alice["id"]),
-            {"workspace_id": WORKSPACE_ID},
+            {"workspace_id": WORKSPACE_ID, "workflow_version_id": WORKFLOW_VERSION_ID},
         )
     print("Forge local demo data seeded.")
 
