@@ -8,7 +8,7 @@ MAX_OBJECTIVE_BYTES = 4096
 MAX_STEPS = 20
 MAX_EDGES = 60
 MAX_STEP_KEY_LENGTH = 64
-SUPPORTED_STEP_KINDS = frozenset({"manual", "deterministic"})
+SUPPORTED_STEP_KINDS = frozenset({"manual", "deterministic", "tool"})
 
 
 class RunStatus(StrEnum):

@@ -158,9 +158,41 @@ flowchart LR
 
 The canonical run and task state diagrams live beside their invariants in the [domain and workflow model](domain-workflow-model.md). The [failure model](failure-model.md) explains what happens at every crash, retry, cancellation, and ambiguous-effect edge.
 
+## Current typed tool runtime subset
+
+The current implementation adds typed, versioned tools to the worker path without allowing arbitrary browser-triggered execution. A workflow step references a registered tool, run creation snapshots an exact grant, and the worker revalidates that grant before executing a deterministic local adapter.
+
+```mermaid
+flowchart TD
+    CODE[Code-registered tool catalog]
+    DEF[tool_definitions]
+    VER[tool_versions\nschema + risk + limits]
+    WSTEP[Workflow step\nkind=tool + name/version/args]
+    RUN[Run creation]
+    GRANT[run_tool_grants\nexact version snapshot]
+    OUTBOX[Outbox + Redis\nminimal task IDs]
+    WORKER[Worker claim\nlease + tenant scope]
+    VALIDATE{Grant, schema,\nrisk policy valid?}
+    INTENT[tool_invocations\nintent + action hash]
+    ADAPTER[Deterministic local adapter]
+    UNKNOWN[outcome_unknown\nreconciliation needed]
+    EVIDENCE[evidence_items\ntrust label + content hash]
+    DENY[Fail closed\nsafe error]
+
+    CODE --> DEF --> VER
+    WSTEP --> RUN --> GRANT
+    RUN --> OUTBOX --> WORKER --> VALIDATE
+    VER --> VALIDATE
+    GRANT --> VALIDATE
+    VALIDATE -- no --> DENY
+    VALIDATE -- yes --> INTENT --> ADAPTER
+    ADAPTER -- success --> EVIDENCE
+    ADAPTER -- ambiguous --> UNKNOWN
+```
+
 ## Current durable workflow execution subset
 
-The current implementation persists immutable workflow versions, instantiates a run-scoped task DAG, evaluates dependency readiness transactionally, writes outbox records beside state transitions, dispatches work through local Redis Streams, and has workers claim, lease, checkpoint, retry, dead-letter, cancel, and recover tasks. Model calls, tools, approvals, replay UI, MCP mediation, and multi-agent routing remain behind later-phase boundaries.
+The current implementation persists immutable workflow versions, instantiates a run-scoped task DAG, evaluates dependency readiness transactionally, writes outbox records beside state transitions, dispatches work through local Redis Streams, and has workers claim, lease, checkpoint, retry, dead-letter, cancel, and recover tasks. Typed deterministic tools now execute through the worker runtime with run-scoped grants, invocation ledgers, and evidence provenance. Model calls, approvals, replay UI, MCP mediation, and multi-agent routing remain behind later-phase boundaries.
 
 ```mermaid
 flowchart TD

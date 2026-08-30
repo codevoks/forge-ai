@@ -43,6 +43,19 @@ class DeterministicJitter:
 
 
 class RetryPolicy:
+    NON_RETRYABLE_ERROR_TYPES = frozenset(
+        {
+            "permanent",
+            "tool_adapter_missing",
+            "tool_input_invalid",
+            "tool_not_granted",
+            "tool_not_registered",
+            "tool_outcome_unknown",
+            "tool_risk_mismatch",
+            "tool_step_invalid",
+        }
+    )
+
     def __init__(
         self,
         *,
@@ -57,7 +70,7 @@ class RetryPolicy:
         self.jitter = jitter or DeterministicJitter()
 
     def decide(self, *, attempt_number: int, error_type: str, now: datetime) -> RetryDecision:
-        if error_type == "permanent":
+        if error_type in self.NON_RETRYABLE_ERROR_TYPES:
             return RetryDecision(False, None, "permanent_failure")
         if attempt_number >= self.max_attempts:
             return RetryDecision(False, None, "attempts_exhausted")

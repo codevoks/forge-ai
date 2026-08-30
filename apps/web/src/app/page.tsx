@@ -11,16 +11,22 @@ import {
   getMe,
   getWorkerState,
   listDeadLetters,
+  listEvidence,
   listEvents,
   listTasks,
+  listToolInvocations,
+  listTools,
   listWorkflows,
   requeueDeadLetter,
   runRecoveryScan,
   type DeadLetter,
+  type EvidenceItem,
   type ExecutionEvent,
   type RecoveryScan,
   type RunSummary,
   type TaskSummary,
+  type ToolInvocation,
+  type ToolSummary,
   type WorkerState,
   type WorkflowVersion
 } from "../lib/api";
@@ -35,6 +41,7 @@ const panelClass =
   "rounded-[18px] border border-zinc-800 bg-[#0d0d0f]/90 p-4 shadow-[0_18px_60px_rgba(0,0,0,0.24)]";
 const cardClass = "rounded-2xl border border-zinc-800 bg-[#141417] p-4";
 const pillClass = "rounded-full border border-violet-400/25 bg-violet-400/10 px-2 py-1 text-xs text-violet-200";
+const mutedPillClass = "rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-300";
 
 function hasCapability(actor: ActorSummary | null, capability: string) {
   return Boolean(
@@ -49,9 +56,13 @@ export default function Home() {
   const [error, setError] = useState("");
   const [token, setToken] = useState("");
   const [workflows, setWorkflows] = useState<WorkflowVersion[]>([]);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [run, setRun] = useState<RunSummary | null>(null);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [events, setEvents] = useState<ExecutionEvent[]>([]);
+  const [tools, setTools] = useState<ToolSummary[]>([]);
+  const [toolInvocations, setToolInvocations] = useState<ToolInvocation[]>([]);
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
   const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
@@ -62,7 +73,11 @@ export default function Home() {
     setRun(null);
     setTasks([]);
     setEvents([]);
+    setToolInvocations([]);
+    setEvidenceItems([]);
     setWorkflows([]);
+    setSelectedWorkflowId("");
+    setTools([]);
     setWorkerState(null);
     setDeadLetters([]);
     setRecovery(null);
@@ -70,10 +85,18 @@ export default function Home() {
     try {
       const nextToken = await getDemoToken(subject);
       const me = await getMe(nextToken);
-      const workflowVersions = await listWorkflows(nextToken);
+      const [workflowVersions, toolCatalog] = await Promise.all([
+        listWorkflows(nextToken),
+        listTools(nextToken)
+      ]);
+      const defaultWorkflow =
+        workflowVersions.find((workflow) => workflow.name === "Typed Tool Demo") ??
+        workflowVersions[0];
       setToken(nextToken);
       setActor(me);
       setWorkflows(workflowVersions);
+      setSelectedWorkflowId(defaultWorkflow?.id ?? "");
+      setTools(toolCatalog);
       await refreshOperations(nextToken, me);
       setStatus("Authenticated through the local OIDC/JWKS path.");
     } catch (caught) {
@@ -109,20 +132,36 @@ export default function Home() {
     ]);
     setTasks(nextTasks);
     setEvents(nextEvents);
+    const hasToolTask = nextTasks.some((task) => task.kind === "tool");
+    if (hasToolTask) {
+      const [nextInvocations, nextEvidence] = await Promise.all([
+        listToolInvocations(token, runId),
+        listEvidence(token, runId)
+      ]);
+      setToolInvocations(nextInvocations);
+      setEvidenceItems(nextEvidence);
+    } else {
+      setToolInvocations([]);
+      setEvidenceItems([]);
+    }
     await refreshOperations();
   }
 
   async function createDeterministicRun() {
-    if (!token || workflows.length === 0) {
+    const selectedWorkflow = workflows.find((workflow) => workflow.id === selectedWorkflowId);
+    if (!token || !selectedWorkflow) {
       return;
     }
     setError("");
     setStatus("Creating persisted run and task DAG...");
     try {
       const nextRun = await createRun(token, {
-        workspace_id: workflows[0].workspace_id,
-        workflow_version_id: workflows[0].id,
-        objective: "Demonstrate durable local worker execution."
+        workspace_id: selectedWorkflow.workspace_id,
+        workflow_version_id: selectedWorkflow.id,
+        objective:
+          selectedWorkflow.name === "Typed Tool Demo"
+            ? "Demonstrate typed tool runtime, invocation ledger, and evidence provenance."
+            : "Demonstrate durable local worker execution."
       });
       await refreshRunState(nextRun.id);
       setStatus("Run created and queued. The local worker can execute it asynchronously.");
@@ -222,9 +261,11 @@ export default function Home() {
 
   const canCreateRun = actor?.workspaces.some(
     (workspace) =>
-      workspace.id === workflows[0]?.workspace_id && workspace.capabilities.includes("run.create")
+      workspace.id === workflows.find((workflow) => workflow.id === selectedWorkflowId)?.workspace_id &&
+      workspace.capabilities.includes("run.create")
   );
   const canRecover = hasCapability(actor, "run.recover");
+  const selectedWorkflow = workflows.find((workflow) => workflow.id === selectedWorkflowId);
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(167,139,250,0.16),transparent_32rem),linear-gradient(180deg,#09090b_0%,#050505_44%)] px-6 py-8">
@@ -392,15 +433,47 @@ export default function Home() {
           </section>
         ) : null}
 
-        {actor && workflows.length > 0 ? (
+        {actor && tools.length > 0 ? (
+          <section className={panelClass}>
+            <div>
+              <p className="text-sm text-zinc-400">Typed tool catalog</p>
+              <h2 className="mt-1 text-xl font-semibold text-zinc-50">
+                Code-registered tools with versioned schemas and risk labels
+              </h2>
+              <p className="mt-2 text-sm text-zinc-400">
+                This catalog is read-only. The browser can inspect registered tools, but it cannot
+                execute arbitrary tool calls.
+              </p>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+              {tools.map((tool) => (
+                <article className={cardClass} key={tool.id}>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={pillClass}>v{tool.version}</span>
+                    <span className={mutedPillClass}>{tool.risk}</span>
+                    <span className={mutedPillClass}>{tool.status}</span>
+                  </div>
+                  <h3 className="mt-3 font-semibold text-zinc-50">{tool.display_name}</h3>
+                  <p className="mt-2 text-sm text-zinc-400">{tool.description}</p>
+                  <p className="mt-3 break-all font-mono text-xs text-violet-200">{tool.name}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {actor && selectedWorkflow ? (
           <section className={panelClass}>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-sm text-zinc-400">Published workflow version</p>
-                <h2 className="mt-1 text-xl font-semibold text-zinc-50">{workflows[0].name}</h2>
+                <h2 className="mt-1 text-xl font-semibold text-zinc-50">
+                  {selectedWorkflow.name}
+                </h2>
                 <p className="mt-2 text-sm text-zinc-400">
-                  Immutable version {workflows[0].version_number}; persisted DAG with{" "}
-                  {workflows[0].steps.length} steps and {workflows[0].edges.length} edges.
+                  Immutable version {selectedWorkflow.version_number}; persisted DAG with{" "}
+                  {selectedWorkflow.steps.length} steps and {selectedWorkflow.edges.length} edges.
                 </p>
               </div>
               <button
@@ -408,12 +481,33 @@ export default function Home() {
                 disabled={!canCreateRun}
                 onClick={() => void createDeterministicRun()}
               >
-                Create deterministic run
+                Create selected run
               </button>
             </div>
 
+            <div className="mt-4 flex flex-wrap gap-2">
+              {workflows.map((workflow) => (
+                <button
+                  className={`${buttonBase} ${
+                    selectedWorkflowId === workflow.id ? activeButton : ""
+                  }`}
+                  key={workflow.id}
+                  onClick={() => {
+                    setSelectedWorkflowId(workflow.id);
+                    setRun(null);
+                    setTasks([]);
+                    setEvents([]);
+                    setToolInvocations([]);
+                    setEvidenceItems([]);
+                  }}
+                >
+                  {workflow.name}
+                </button>
+              ))}
+            </div>
+
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-              {workflows[0].steps.map((step) => (
+              {selectedWorkflow.steps.map((step) => (
                 <article className={cardClass} key={step.key}>
                   <p className="text-xs uppercase tracking-[0.2em] text-violet-300">{step.key}</p>
                   <h3 className="mt-2 font-semibold text-zinc-50">{step.name}</h3>
@@ -483,6 +577,76 @@ export default function Home() {
                 ))}
               </ol>
             </div>
+
+            {toolInvocations.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
+                <h3 className="font-semibold text-zinc-50">Tool invocation ledger</h3>
+                <div className="mt-3 grid gap-2">
+                  {toolInvocations.map((invocation) => (
+                    <article
+                      className="rounded-xl border border-zinc-800 bg-[#0d0d0f] p-3"
+                      key={invocation.id}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="font-mono text-sm text-violet-200">
+                            {invocation.tool_name} v{invocation.tool_version}
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            action hash {invocation.action_hash.slice(0, 16)}… · idempotency{" "}
+                            {invocation.idempotency_key}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <span className={pillClass}>{invocation.status}</span>
+                          <span className={mutedPillClass}>{invocation.risk}</span>
+                        </div>
+                      </div>
+                      {invocation.error_type ? (
+                        <p className="mt-2 text-sm text-rose-300">
+                          {invocation.error_type}: {invocation.error_message}
+                        </p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {evidenceItems.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
+                <h3 className="font-semibold text-zinc-50">Evidence provenance</h3>
+                <div className="mt-3 grid gap-2">
+                  {evidenceItems.map((item) => (
+                    <article
+                      className="rounded-xl border border-zinc-800 bg-[#0d0d0f] p-3"
+                      key={item.id}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="font-mono text-sm text-violet-200">{item.source_name}</p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            {item.source_type} · content hash {item.content_hash.slice(0, 16)}…
+                          </p>
+                        </div>
+                        <span
+                          className={
+                            item.trust_label === "untrusted_tool_output"
+                              ? "rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs text-amber-200"
+                              : pillClass
+                          }
+                        >
+                          {item.trust_label}
+                        </span>
+                      </div>
+                      <pre className="mt-3 max-h-36 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
+                        {JSON.stringify(item.summary, null, 2)}
+                      </pre>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </section>
         ) : null}
       </div>

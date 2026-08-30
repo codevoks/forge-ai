@@ -15,7 +15,8 @@
     "db:up": "docker compose up -d postgres redis",
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @forge/api db:migrate",
-    "db:seed": "pnpm --filter @forge/api db:seed"
+    "db:seed": "pnpm --filter @forge/api db:seed",
+    "demo:tools": "pnpm --filter @forge/api demo:tools"
   },
   "devDependencies": {
     "turbo": "2.6.1"

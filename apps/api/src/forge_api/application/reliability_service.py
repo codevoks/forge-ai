@@ -1,5 +1,7 @@
 from typing import Any
 
+from forge_api.api.errors import ProblemError
+from forge_api.application.tool_runtime import ToolRuntime
 from forge_api.domain.reliability import JobEnvelope, RetryPolicy, sanitize_payload
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.workflow_repositories import OutboxRepository, WorkerRepository
@@ -28,7 +30,12 @@ class OutboxDispatcher:
 
 
 class DeterministicTaskExecutor:
+    def __init__(self, *, tool_runtime: ToolRuntime) -> None:
+        self.tool_runtime = tool_runtime
+
     def execute(self, claim: dict[str, Any]) -> dict[str, Any]:
+        if claim.get("kind") == "tool":
+            return self.tool_runtime.invoke_for_claim(claim)
         task_input = claim.get("input", {})
         failure_mode = task_input.get("failure_mode") if isinstance(task_input, dict) else None
         attempt_number = int(claim["attempt_number"])
@@ -66,7 +73,7 @@ class WorkerConsumer:
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.retry_policy = retry_policy
-        self.executor = DeterministicTaskExecutor()
+        self.executor = DeterministicTaskExecutor(tool_runtime=ToolRuntime(database=database))
 
     def consume_once(self, *, block_ms: int = 1000) -> str:
         envelope = self.queue.consume(consumer_name=self.worker_id, block_ms=block_ms)
@@ -112,6 +119,16 @@ class WorkerConsumer:
             )
             self.queue.ack(message_id=envelope.message_id)
             return "dead_lettered"
+        except ProblemError as exc:
+            self._fail_claim(
+                envelope=envelope,
+                claim=claim,
+                actor_id=actor_id,
+                error_type=exc.code,
+                error_message=exc.message,
+            )
+            self.queue.ack(message_id=envelope.message_id)
+            return "policy_denied"
 
         with self.database.transaction(worker_id=self.worker_id) as conn:
             worker = WorkerRepository(conn, lease_seconds=self.lease_seconds)

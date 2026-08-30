@@ -1,13 +1,17 @@
+import json
 from urllib.parse import urlparse
 
 from forge_api.config import Settings
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.repositories import IdentityRepository, TenantRepository
+from forge_api.infrastructure.tool_repositories import ToolRegistryRepository
 
 TENANT_ID = "018f0000-0000-7000-8000-000000000001"
 WORKSPACE_ID = "018f0000-0000-7000-8000-000000000101"
 WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000201"
 WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000202"
+TOOL_WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000301"
+TOOL_WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000302"
 
 
 def _assert_local_database_url(database_url: str) -> None:
@@ -25,6 +29,9 @@ def main() -> None:
         tenant_id=TENANT_ID,
         actor_id="00000000-0000-0000-0000-000000000000",
     ) as conn:
+        conn.execute("delete from evidence_items")
+        conn.execute("delete from tool_invocations")
+        conn.execute("delete from run_tool_grants")
         conn.execute("delete from dead_letters")
         conn.execute("delete from checkpoints")
         conn.execute("delete from inbox_messages")
@@ -39,6 +46,8 @@ def main() -> None:
         conn.execute("delete from workflow_steps")
         conn.execute("delete from workflow_versions")
         conn.execute("delete from workflow_templates")
+        conn.execute("delete from tool_versions")
+        conn.execute("delete from tool_definitions")
         conn.execute("delete from security_audit_events")
         conn.execute("delete from idempotency_records")
         conn.execute("delete from memberships")
@@ -118,6 +127,7 @@ def main() -> None:
                 alice["id"],
             ),
         )
+        ToolRegistryRepository(conn).sync_code_registered_tools()
         steps = [
             ("collect_logs", "Collect logs", "deterministic"),
             ("inspect_metrics", "Inspect metrics", "deterministic"),
@@ -147,11 +157,104 @@ def main() -> None:
                 """,
                 (TENANT_ID, WORKSPACE_ID, WORKFLOW_VERSION_ID, from_step, to_step),
             )
+        conn.execute(
+            """
+            insert into workflow_templates (id, tenant_id, workspace_id, name, created_by)
+            values (%s, %s, %s, %s, %s)
+            """,
+            (
+                TOOL_WORKFLOW_TEMPLATE_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                "Typed Tool Demo",
+                alice["id"],
+            ),
+        )
+        conn.execute(
+            """
+            insert into workflow_versions
+              (id, tenant_id, workspace_id, template_id, version_number, status, name, created_by)
+            values (%s, %s, %s, %s, 1, 'published', %s, %s)
+            """,
+            (
+                TOOL_WORKFLOW_VERSION_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                TOOL_WORKFLOW_TEMPLATE_ID,
+                "Typed Tool Demo",
+                alice["id"],
+            ),
+        )
+        tool_steps = [
+            (
+                "deployment_history",
+                "Read deployment history",
+                {
+                    "tool_name": "deployment_history.lookup",
+                    "tool_version": 1,
+                    "arguments": {"service": "api", "environment": "production"},
+                },
+            ),
+            (
+                "customer_reports",
+                "Search customer reports",
+                {
+                    "tool_name": "customer_reports.search",
+                    "tool_version": 1,
+                    "arguments": {"product_area": "worker", "severity": "medium"},
+                },
+            ),
+            (
+                "simulated_ticket",
+                "Create simulated ticket",
+                {
+                    "tool_name": "ticket.create_simulated",
+                    "tool_version": 1,
+                    "arguments": {
+                        "title": "Investigate local worker signal",
+                        "severity": "medium",
+                        "dry_run": True,
+                    },
+                },
+            ),
+        ]
+        for step_key, name, tool_input in tool_steps:
+            conn.execute(
+                """
+                insert into workflow_steps
+                  (id, tenant_id, workspace_id, workflow_version_id, step_key, name, kind, input)
+                values (gen_random_uuid(), %s, %s, %s, %s, %s, 'tool', %s)
+                """,
+                (
+                    TENANT_ID,
+                    WORKSPACE_ID,
+                    TOOL_WORKFLOW_VERSION_ID,
+                    step_key,
+                    name,
+                    json.dumps(tool_input),
+                ),
+            )
+        for from_step, to_step in [
+            ("deployment_history", "simulated_ticket"),
+            ("customer_reports", "simulated_ticket"),
+        ]:
+            conn.execute(
+                """
+                insert into workflow_edges
+                  (id, tenant_id, workspace_id, workflow_version_id, from_step_key, to_step_key)
+                values (gen_random_uuid(), %s, %s, %s, %s, %s)
+                """,
+                (TENANT_ID, WORKSPACE_ID, TOOL_WORKFLOW_VERSION_ID, from_step, to_step),
+            )
         TenantRepository(conn).audit(
             "local.seeded",
             TENANT_ID,
             str(alice["id"]),
-            {"workspace_id": WORKSPACE_ID, "workflow_version_id": WORKFLOW_VERSION_ID},
+            {
+                "workspace_id": WORKSPACE_ID,
+                "workflow_version_id": WORKFLOW_VERSION_ID,
+                "tool_workflow_version_id": TOOL_WORKFLOW_VERSION_ID,
+            },
         )
     print("Forge local demo data seeded.")
 

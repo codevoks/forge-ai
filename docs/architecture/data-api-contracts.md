@@ -87,9 +87,24 @@ GET /v1/operations/worker-state
 GET /v1/operations/dead-letters
 POST /v1/operations/dead-letters/{dead_letter_id}:requeue
 POST /v1/operations/recovery:scan
+GET /v1/tools
+GET /v1/tools/runs/{run_id}/invocations
+GET /v1/tools/runs/{run_id}/evidence
 ```
 
 `POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
+
+Typed tool runtime endpoints expose only catalog and run-inspection views. Forge does not expose a generic browser/API endpoint that can execute arbitrary tools. Tool execution happens only inside a run-scoped task that references a code-registered tool name and version. At run creation, Forge snapshots the exact granted tool versions into `run_tool_grants`; at worker execution time, Forge revalidates the grant, strict input schema, risk class, and deterministic policy before adapter invocation.
+
+Implemented tool tables currently include:
+
+| Table | Purpose | Important constraints |
+|---|---|---|
+| `tool_definitions` | Stable tool identity and ownership boundary | Code-registered names; tenant/workspace nullable for global tools; status tracked explicitly |
+| `tool_versions` | Immutable executable schema/risk contract | Versioned input/output schema, risk, timeout, retryability, and idempotency metadata |
+| `run_tool_grants` | Run-scoped allowlist snapshot | One exact tool version grant per run/tool version; queue possession cannot add authority |
+| `tool_invocations` | Intent/result ledger | Canonical arguments and action hash; logical invocation uniqueness; statuses include `outcome_unknown` |
+| `evidence_items` | Provenance records derived from tool output | Source, trust label, content hash, and bounded summary; raw secrets/provider payloads are not logged |
 
 ## Asynchronous envelope
 

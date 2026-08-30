@@ -84,6 +84,47 @@ export type RecoveryScan = {
   republished_ready_tasks: number;
 };
 
+export type ToolSummary = {
+  id: string;
+  name: string;
+  version: number;
+  display_name: string;
+  description: string;
+  risk: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  status: string;
+};
+
+export type ToolInvocation = {
+  id: string;
+  run_id: string;
+  task_id: string;
+  tool_name: string;
+  tool_version: number;
+  status: string;
+  risk: string;
+  action_hash: string;
+  idempotency_key: string;
+  error_type: string | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type EvidenceItem = {
+  id: string;
+  run_id: string;
+  task_id: string | null;
+  tool_invocation_id: string | null;
+  source_type: string;
+  source_name: string;
+  trust_label: string;
+  summary: Record<string, unknown>;
+  content_hash: string;
+  created_at: string;
+};
+
 async function parseProblem(response: Response): Promise<Error> {
   const problem = (await response.json()) as ProblemDetails;
   return new Error(`${problem.code}: ${problem.message}`);
@@ -243,6 +284,45 @@ export async function listDeadLetters(token: string): Promise<DeadLetter[]> {
   }
   const payload = (await response.json()) as { dead_letters: DeadLetter[] };
   return payload.dead_letters;
+}
+
+export async function listTools(token: string): Promise<ToolSummary[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/tools`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { tools: ToolSummary[] };
+  return payload.tools;
+}
+
+export async function listToolInvocations(
+  token: string,
+  runId: string
+): Promise<ToolInvocation[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/tools/runs/${runId}/invocations`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { tool_invocations: ToolInvocation[] };
+  return payload.tool_invocations;
+}
+
+export async function listEvidence(token: string, runId: string): Promise<EvidenceItem[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/tools/runs/${runId}/evidence`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { evidence_items: EvidenceItem[] };
+  return payload.evidence_items;
 }
 
 export async function requeueDeadLetter(token: string, deadLetterId: string): Promise<RunSummary> {

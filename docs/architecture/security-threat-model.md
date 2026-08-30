@@ -38,6 +38,8 @@ Every crossing authenticates its caller where possible, validates typed/size-bou
 - Separation of duties is policy-configurable. Approval never grants missing tool/user permissions.
 - Tool output is data with provenance. It cannot change system instructions, permissions, budgets, or allowed tools.
 
+Current typed-tool runtime implementation enforces the early subset of this model with code-registered tools, strict Pydantic input/output schemas, run-scoped grants, risk labels, local deterministic adapters, invocation action hashes, idempotency keys, `outcome_unknown` recording for ambiguous simulated effects, RLS-protected invocation/evidence inspection, and explicit trust labels such as `untrusted_tool_output`. High-risk irreversible side effects, human approvals, secret resolution, network egress tools, planner-selected calls, MCP resources, and live providers remain unavailable until their owning phases.
+
 ## Prompt-injection controls
 
 1. Keep policy/tool capability outside natural-language prompts and enforce it after every model decision.
@@ -75,4 +77,3 @@ Every stored payload category declares owner, purpose, read/write principals, re
 ## Security release gates
 
 No phase passes with known cross-tenant access, model-controlled authorization, unbound approval, logged secret, unbounded loop/cost, replayed effect by default, or an external-fetch tool without network destination controls. Threat model and abuse cases are updated whenever a new trust boundary appears.
-

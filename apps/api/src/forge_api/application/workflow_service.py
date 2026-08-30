@@ -2,6 +2,7 @@ from typing import Any
 
 from forge_api.api.errors import ProblemError
 from forge_api.domain.identity import ActorContext, Capability
+from forge_api.domain.tools import tool_by_name_version
 from forge_api.domain.workflow import (
     DAGValidator,
     WorkflowEdgeDefinition,
@@ -9,6 +10,10 @@ from forge_api.domain.workflow import (
 )
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.repositories import IdempotencyRepository, canonical_hash
+from forge_api.infrastructure.tool_repositories import (
+    ToolRegistryRepository,
+    tool_reference_from_step,
+)
 from forge_api.infrastructure.workflow_repositories import EventRepository, WorkflowRepository
 from forge_api.policy.authorization import AuthorizationService
 
@@ -78,6 +83,28 @@ class WorkflowService:
                 return response_payload
 
             workflows = WorkflowRepository(conn)
+            registry = ToolRegistryRepository(conn)
+            for step in steps:
+                if step.kind != "tool":
+                    continue
+                tool_name, tool_version = tool_reference_from_step(step.input)
+                registry_tool = registry.resolve(name=tool_name, version=tool_version)
+                local_tool = tool_by_name_version(tool_name, tool_version)
+                if local_tool is None:
+                    raise ProblemError(
+                        422,
+                        "tool_not_registered",
+                        "Tool steps must reference a code-registered tool.",
+                    )
+                local_tool.validate_input(dict(step.input["arguments"]))
+                if registry_tool["risk"] == "simulated_effect" and not step.input["arguments"].get(
+                    "dry_run"
+                ):
+                    raise ProblemError(
+                        422,
+                        "simulated_effect_requires_dry_run",
+                        "Simulated effect tools must use dry_run=true.",
+                    )
             version = workflows.create_published_version(
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,

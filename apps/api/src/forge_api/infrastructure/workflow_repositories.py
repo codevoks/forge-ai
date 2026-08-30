@@ -13,6 +13,7 @@ from forge_api.domain.workflow import (
     validate_transition,
 )
 from forge_api.infrastructure.ids import uuid7
+from forge_api.infrastructure.tool_repositories import RunToolGrantRepository
 
 
 class EventRepository:
@@ -389,6 +390,13 @@ class RunRepository:
                     edge["to"],
                 ),
             )
+        RunToolGrantRepository(self.conn).grant_tools_for_run(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            run_id=run_id,
+            actor_id=actor_id,
+            workflow_version=workflow_version,
+        )
         self.events.append(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
@@ -1093,7 +1101,9 @@ class WorkerRepository:
             "task_id": str(task["id"]),
             "step_key": str(task["step_key"]),
             "name": str(task["name"]),
+            "kind": str(task["kind"]),
             "input": task["input"],
+            "worker_id": worker_id,
         }
 
     def complete_attempt(

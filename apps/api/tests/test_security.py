@@ -1,13 +1,16 @@
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import jwt
 import pytest
 from conftest import auth_headers
 from fastapi.testclient import TestClient
 
+from forge_api.application.reliability_service import OutboxDispatcher, RetryPolicy, WorkerConsumer
 from forge_api.config import Settings
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.dev_issuer import DevIssuer
+from forge_api.infrastructure.queue import InMemoryQueue
 
 pytestmark = pytest.mark.security
 
@@ -17,6 +20,50 @@ def seeded_workflow(client: TestClient, issuer: DevIssuer, subject: str = "alice
         "workflow_versions"
     ]
     return next(workflow for workflow in workflows if workflow["name"] == "Incident Response Demo")
+
+
+def seeded_tool_workflow(client: TestClient, issuer: DevIssuer, subject: str = "alice") -> dict:
+    workflows = client.get("/v1/workflows", headers=auth_headers(issuer, subject)).json()[
+        "workflow_versions"
+    ]
+    return next(workflow for workflow in workflows if workflow["name"] == "Typed Tool Demo")
+
+
+def create_and_complete_tool_run(
+    *,
+    database: Database,
+    settings: Settings,
+    client: TestClient,
+    issuer: DevIssuer,
+) -> dict:
+    workflow = seeded_tool_workflow(client, issuer)
+    run = client.post(
+        "/v1/runs",
+        headers=auth_headers(issuer, "alice") | {"Idempotency-Key": f"security-tool-run-{uuid4()}"},
+        json={
+            "workspace_id": workflow["workspace_id"],
+            "workflow_version_id": workflow["id"],
+            "objective": "Create tool evidence for security inspection.",
+        },
+    ).json()["run"]
+    queue = InMemoryQueue()
+    dispatcher = OutboxDispatcher(database=database, queue=queue, worker_id=settings.worker_id)
+    consumer = WorkerConsumer(
+        database=database,
+        queue=queue,
+        worker_id=settings.worker_id,
+        lease_seconds=settings.task_lease_seconds,
+        retry_policy=RetryPolicy(max_attempts=settings.task_max_attempts),
+    )
+    for _ in range(80):
+        dispatcher.dispatch_once()
+        consumer.consume_once(block_ms=0)
+        current = client.get(f"/v1/runs/{run['id']}", headers=auth_headers(issuer, "alice")).json()[
+            "run"
+        ]
+        if current["status"] == "succeeded":
+            return current
+    raise AssertionError("tool run did not complete")
 
 
 def test_unsigned_jwt_is_rejected(client: TestClient, settings: Settings) -> None:
@@ -223,3 +270,74 @@ def test_phase3_rls_blocks_outbox_without_scope(
         rows = conn.execute("select id from outbox_messages").fetchall()
 
     assert rows == []
+
+
+def test_tool_invocation_and_evidence_rls_block_without_scope(
+    database: Database,
+    settings: Settings,
+    client: TestClient,
+    issuer: DevIssuer,
+) -> None:
+    create_and_complete_tool_run(
+        database=database,
+        settings=settings,
+        client=client,
+        issuer=issuer,
+    )
+
+    with database.transaction() as conn:
+        invocation_rows = conn.execute("select id from tool_invocations").fetchall()
+        evidence_rows = conn.execute("select id from evidence_items").fetchall()
+
+    assert invocation_rows == []
+    assert evidence_rows == []
+
+
+def test_mallory_cannot_read_tool_invocations_or_evidence(
+    database: Database,
+    settings: Settings,
+    client: TestClient,
+    issuer: DevIssuer,
+) -> None:
+    run = create_and_complete_tool_run(
+        database=database,
+        settings=settings,
+        client=client,
+        issuer=issuer,
+    )
+
+    invocations = client.get(
+        f"/v1/tools/runs/{run['id']}/invocations",
+        headers=auth_headers(issuer, "mallory"),
+    )
+    evidence = client.get(
+        f"/v1/tools/runs/{run['id']}/evidence",
+        headers=auth_headers(issuer, "mallory"),
+    )
+
+    assert invocations.status_code == 404
+    assert evidence.status_code == 404
+
+
+def test_untrusted_tool_output_is_labeled_not_executed_as_instruction(
+    database: Database,
+    settings: Settings,
+    client: TestClient,
+    issuer: DevIssuer,
+) -> None:
+    run = create_and_complete_tool_run(
+        database=database,
+        settings=settings,
+        client=client,
+        issuer=issuer,
+    )
+
+    evidence = client.get(
+        f"/v1/tools/runs/{run['id']}/evidence",
+        headers=auth_headers(issuer, "alice"),
+    ).json()["evidence_items"]
+    untrusted = next(item for item in evidence if item["trust_label"] == "untrusted_tool_output")
+
+    assert "ignore previous instructions" in str(untrusted["summary"])
+    assert untrusted["source_name"] == "customer_reports.search"
+    assert run["status"] == "succeeded"
