@@ -51,6 +51,7 @@
 - `pnpm test`: passed. API: 8 passed, 7 deselected. Worker: 1 passed. Web: 1 passed. Config/shared-types Node test packages contained no tests yet.
 - `pnpm test:security`: passed. API security/adversarial suite: 7 passed, 8 deselected. Web security suite: 1 passed. Worker security task compiled the worker shell.
 - `node scripts/check-public-files.mjs`: passed after Git initialization and local excludes; private runtime artifacts are not visible to Git.
+- GitHub remote verification: `main` and `phase-1` both resolve to the same verified completion commit.
 
 ## Demonstration evidence
 
@@ -74,5 +75,5 @@
 ## Phase history mapping
 
 - Completion report: `docs/internal/phase-1-foundation-authentication-tenancy-rbac-report.md`
-- Completion commit: the local commit tagged `phase-1`; remote verification is pending GitHub authentication repair.
-- Completion tag: `phase-1` locally; remote tag push is pending GitHub authentication repair.
+- Completion commit: the commit tagged `phase-1`.
+- Completion tag: `phase-1`, verified on the GitHub remote.
