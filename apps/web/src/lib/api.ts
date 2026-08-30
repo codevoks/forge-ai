@@ -26,6 +26,7 @@ export type WorkflowVersion = {
 
 export type RunSummary = {
   id: string;
+  tenant_id: string;
   workspace_id: string;
   workflow_version_id: string;
   workflow_name: string;
@@ -50,6 +51,37 @@ export type ExecutionEvent = {
   sequence: number;
   aggregate_type: string;
   payload: Record<string, unknown>;
+};
+
+export type WorkerState = {
+  outbox: {
+    unpublished: number;
+    published: number;
+  };
+  attempts: Record<string, number>;
+  checkpoints: number;
+  dead_letters: number;
+};
+
+export type DeadLetter = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  run_id: string | null;
+  task_id: string | null;
+  message_id: string | null;
+  reason: string;
+  sanitized_payload: Record<string, unknown>;
+  retryable: boolean;
+  requeued_at: string | null;
+  requeued_by: string | null;
+  created_at: string;
+};
+
+export type RecoveryScan = {
+  expired_leases: number;
+  due_retries: number;
+  republished_ready_tasks: number;
 };
 
 async function parseProblem(response: Response): Promise<Error> {
@@ -110,11 +142,40 @@ export async function createRun(
   return payload.run;
 }
 
+export async function getRun(token: string, runId: string): Promise<RunSummary> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { run: RunSummary };
+  return payload.run;
+}
+
 export async function advanceRun(token: string, runId: string): Promise<RunSummary> {
   const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}:advance`, {
     method: "POST",
     cache: "no-store",
     headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { run: RunSummary };
+  return payload.run;
+}
+
+export async function cancelRun(token: string, runId: string, reason: string): Promise<RunSummary> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}:cancel`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ reason })
   });
   if (!response.ok) {
     throw await parseProblem(response);
@@ -145,4 +206,54 @@ export async function listEvents(token: string, runId: string): Promise<Executio
   }
   const payload = (await response.json()) as { events: ExecutionEvent[] };
   return payload.events;
+}
+
+export async function getWorkerState(token: string): Promise<WorkerState> {
+  const response = await fetch(`${API_BASE_URL}/v1/operations/worker-state`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { worker_state: WorkerState };
+  return payload.worker_state;
+}
+
+export async function runRecoveryScan(token: string): Promise<RecoveryScan> {
+  const response = await fetch(`${API_BASE_URL}/v1/operations/recovery:scan`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { recovery: RecoveryScan };
+  return payload.recovery;
+}
+
+export async function listDeadLetters(token: string): Promise<DeadLetter[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/operations/dead-letters`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { dead_letters: DeadLetter[] };
+  return payload.dead_letters;
+}
+
+export async function requeueDeadLetter(token: string, deadLetterId: string): Promise<RunSummary> {
+  const response = await fetch(`${API_BASE_URL}/v1/operations/dead-letters/${deadLetterId}:requeue`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { run: RunSummary };
+  return payload.run;
 }

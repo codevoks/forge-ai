@@ -1,10 +1,11 @@
 from forge_worker.main import health
 
 
-def test_health_marks_execution_deferred() -> None:
+def test_health_marks_local_queue_execution() -> None:
     assert health() == {
         "status": "ok",
         "service": "worker",
-        "execution": "deferred-to-phase-3",
+        "execution": "durable-local-queue",
         "external_integrations": "disabled",
+        "queue": "forge:work",
     }

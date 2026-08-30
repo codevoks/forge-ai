@@ -115,3 +115,26 @@ class RunService:
 
         with self.database.transaction(tenant_id=tenant_id, actor_id=actor.user_id) as conn:
             return RunRepository(conn).advance_one_ready_task(actor_id=actor.user_id, run_id=run_id)
+
+    def cancel(self, actor: ActorContext, run_id: str, reason: str) -> dict[str, Any]:
+        with self.database.transaction(actor_id=actor.user_id) as conn:
+            run = RunRepository(conn).get_run_for_actor(actor_id=actor.user_id, run_id=run_id)
+            decision = AuthorizationService().decide_workspace(
+                actor,
+                str(run["workspace_id"]),
+                Capability.RUN_CREATE,
+            )
+            if not decision.allowed:
+                raise ProblemError(403, "run_cancel_forbidden", "Run cancellation is not allowed.")
+            tenant_id = str(run["tenant_id"])
+
+        with self.database.transaction(tenant_id=tenant_id, actor_id=actor.user_id) as conn:
+            return RunRepository(conn).cancel_run(
+                actor_id=actor.user_id,
+                run_id=run_id,
+                reason=reason,
+            )
+
+    def worker_state(self, actor: ActorContext) -> dict[str, Any]:
+        with self.database.transaction(actor_id=actor.user_id) as conn:
+            return RunRepository(conn).worker_state_for_actor(actor_id=actor.user_id)

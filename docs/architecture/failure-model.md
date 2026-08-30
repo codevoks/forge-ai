@@ -55,7 +55,9 @@ Dependency readiness is derived transactionally after predecessor completion, wi
 
 ## Cancellation
 
-Cancellation writes `cancel_requested_at` and transitions the run to `CANCELLING` transactionally. Scheduler stops making new tasks ready; workers check before claim, before model/tool calls, and before committing/starting effects. Cooperative cancellation cannot unsend an effect. Interruptible adapters receive deadlines/cancel signals; non-interruptible calls finish and their results are recorded but no downstream work starts. Final `CANCELLED` requires no active leases or a timeout/reconciliation decision.
+The current implementation supports explicit run cancellation through a persisted command. A cancellation records `cancellation_requested_at`, `cancelled_by`, and a safe reason, moves the run to `cancelled`, cancels tasks that have not reached a terminal result, and appends cancellation events. Workers re-check run status before claim and before result commit, so queued messages for cancelled work are skipped safely.
+
+The fuller `cancelling -> cancelled` convergence model remains the production target for later interruptible model/tool calls. Cooperative cancellation cannot unsend an external effect. Interruptible adapters receive deadlines/cancel signals; non-interruptible calls finish and their results are recorded, but no downstream work starts.
 
 ## Backpressure and fairness
 
@@ -68,7 +70,15 @@ Cancellation writes `cancel_requested_at` and transitions the run to `CANCELLING
 
 ## Checkpoints and recovery
 
-Checkpoints occur after validated plan creation, each task terminal/suspend transition, each authorized tool result, and bounded agent iterations—not arbitrary Python stack positions. A checkpoint includes schema version, run/task/plan/iteration identity, relevant state, evidence references, budgets, and next legal action. Recovery revalidates current policy, cancellation, approval, tool version, and schema before resuming.
+Checkpoints currently occur after successful deterministic task execution and include the task result plus the attempt/fencing identity. Recovery scans are bounded and run under the worker service principal. They:
+
+- expire stale running attempts whose leases elapsed;
+- mark those attempts `abandoned`;
+- return eligible tasks to `ready`;
+- promote due `retry_wait` tasks;
+- republish ready tasks that have no unpublished outbox message, including after Redis data loss.
+
+Later model/tool phases add checkpoints after validated plan creation, each authorized tool result, and bounded agent iterations. A checkpoint includes schema version, run/task/plan/iteration identity, relevant state, evidence references, budgets, and next legal action. Recovery revalidates current policy, cancellation, approval, tool version, and schema before resuming.
 
 ## Replay semantics
 
@@ -78,4 +88,3 @@ Checkpoints occur after validated plan creation, each task terminal/suspend tran
 - **Effect replay:** off by default; requires new authorization/approval/idempotency scope and produces new lineage.
 
 Replay never pretends nondeterministic model output is bit-identical and never silently reuses expired authorization.
-

@@ -158,19 +158,26 @@ flowchart LR
 
 The canonical run and task state diagrams live beside their invariants in the [domain and workflow model](domain-workflow-model.md). The [failure model](failure-model.md) explains what happens at every crash, retry, cancellation, and ambiguous-effect edge.
 
-## Current deterministic workflow execution subset
+## Current durable workflow execution subset
 
-The current implementation persists immutable workflow versions, instantiates a run-scoped task DAG, evaluates dependency readiness transactionally, and appends execution events beside state transitions. Queue delivery, worker leases, retries, checkpoints, model calls, tools, and approvals remain behind later-phase boundaries.
+The current implementation persists immutable workflow versions, instantiates a run-scoped task DAG, evaluates dependency readiness transactionally, writes outbox records beside state transitions, dispatches work through local Redis Streams, and has workers claim, lease, checkpoint, retry, dead-letter, cancel, and recover tasks. Model calls, tools, approvals, replay UI, MCP mediation, and multi-agent routing remain behind later-phase boundaries.
 
 ```mermaid
 flowchart TD
     WFV[Published WorkflowVersion\nimmutable DAG snapshot]
     OBJ[Objective\nuser text + constraints]
     RUN[Run\ncreated -> running -> succeeded]
-    TASKS[Tasks\npending / ready / running / succeeded]
+    TASKS[Tasks\npending / ready / running / retry_wait / succeeded / failed / cancelled]
     DEPS[TaskDependencies\nadjacency rows]
     EVENTS[ExecutionEvents\nappend-only transition history]
-    TEST[Deterministic advance command\none ready task per call]
+    OUTBOX[OutboxMessages\nminimal durable IDs]
+    REDIS[Redis Streams\nat-least-once queue]
+    WORKER[WorkerConsumer\nclaim + lease + fencing]
+    ATTEMPT[TaskAttempt\nworker, lease, fencing token]
+    CHECKPOINT[Checkpoint\nvalidated task result]
+    DEAD[DeadLetter\nsanitized failure]
+    RECOVERY[Recovery scan\nleases, retries, republish]
+    MANUAL[Manual deterministic advance\nlocal fallback]
 
     WFV -->|pin version| RUN
     OBJ -->|snapshot| RUN
@@ -178,8 +185,47 @@ flowchart TD
     WFV -->|instantiate edges| DEPS
     RUN --> TASKS
     TASKS --> DEPS
-    TEST -->|transaction lock| RUN
-    TEST -->|validate transition| TASKS
-    TEST -->|recalculate readiness| DEPS
-    TEST -->|append in same transaction| EVENTS
+    TASKS -->|ready event in same transaction| OUTBOX
+    OUTBOX -->|dispatch| REDIS
+    REDIS -->|duplicate delivery possible| WORKER
+    WORKER -->|atomic claim| ATTEMPT
+    ATTEMPT -->|success| CHECKPOINT
+    ATTEMPT -->|retryable failure| TASKS
+    ATTEMPT -->|exhausted / permanent failure| DEAD
+    CHECKPOINT --> EVENTS
+    DEAD --> EVENTS
+    RECOVERY -->|expired lease / due retry / Redis loss| OUTBOX
+    MANUAL -->|debug path| TASKS
+```
+
+## Recovery and duplicate-delivery decision flow
+
+PostgreSQL decides whether a job is still legal. Redis loss or duplicate delivery cannot advance state by itself.
+
+```mermaid
+flowchart TD
+    MSG[Queue message\nminimal IDs]
+    INBOX{Inbox already\nsucceeded?}
+    LOAD[Reload run/task\nunder tenant scope]
+    LEGAL{Run running and\ntask ready?}
+    CLAIM[Create attempt\nlease + fencing token]
+    EXEC[Execute bounded\ndeterministic unit]
+    COMMIT{Attempt + fencing\nstill current?}
+    OK[Persist task success,\ncheckpoint, event,\nnext outbox]
+    RETRY[Persist retry_wait\nwith backoff]
+    DLQ[Persist sanitized\ndead letter]
+    SKIP[Skip / acknowledge\nwithout state change]
+    RECOVER[Recovery scanner\nrequeues eligible work]
+
+    MSG --> INBOX
+    INBOX -- yes --> SKIP
+    INBOX -- no --> LOAD
+    LOAD --> LEGAL
+    LEGAL -- no --> SKIP
+    LEGAL -- yes --> CLAIM --> EXEC --> COMMIT
+    COMMIT -- stale --> SKIP
+    COMMIT -- success --> OK
+    COMMIT -- retryable failure --> RETRY --> RECOVER
+    COMMIT -- permanent failure --> DLQ
+    RECOVER --> MSG
 ```

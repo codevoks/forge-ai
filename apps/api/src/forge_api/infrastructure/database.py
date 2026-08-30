@@ -12,7 +12,11 @@ class Database:
 
     @contextmanager
     def transaction(
-        self, *, tenant_id: str | None = None, actor_id: str | None = None
+        self,
+        *,
+        tenant_id: str | None = None,
+        actor_id: str | None = None,
+        worker_id: str | None = None,
     ) -> Iterator[psycopg.Connection[dict[str, Any]]]:
         with psycopg.connect(self.database_url, row_factory=dict_row) as conn:
             with conn.transaction():
@@ -20,6 +24,8 @@ class Database:
                     conn.execute("select set_config('forge.tenant_id', %s, true)", (tenant_id,))
                 if actor_id is not None:
                     conn.execute("select set_config('forge.actor_id', %s, true)", (actor_id,))
+                if worker_id is not None:
+                    conn.execute("select set_config('forge.worker_id', %s, true)", (worker_id,))
                 yield conn
 
     def ping(self) -> bool:

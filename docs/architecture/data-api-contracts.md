@@ -82,9 +82,14 @@ GET /v1/runs/{run_id}
 GET /v1/runs/{run_id}/tasks
 GET /v1/runs/{run_id}/events
 POST /v1/runs/{run_id}:advance
+POST /v1/runs/{run_id}:cancel
+GET /v1/operations/worker-state
+GET /v1/operations/dead-letters
+POST /v1/operations/dead-letters/{dead_letter_id}:requeue
+POST /v1/operations/recovery:scan
 ```
 
-`POST /v1/runs/{run_id}:advance` is a deterministic local execution adapter for the current workflow-domain slice. It advances one ready deterministic task through the same persisted run/task/event architecture that later workers will use; it is not a substitute for the queued worker runtime.
+`POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
 
 ## Asynchronous envelope
 

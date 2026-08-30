@@ -18,6 +18,7 @@ class Capability(StrEnum):
     MEMBER_MANAGE = "member.manage"
     RUN_READ = "run.read"
     RUN_CREATE = "run.create"
+    RUN_RECOVER = "run.recover"
 
 
 ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
@@ -29,6 +30,7 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
         Capability.MEMBER_MANAGE,
         Capability.RUN_READ,
         Capability.RUN_CREATE,
+        Capability.RUN_RECOVER,
     },
     Role.WORKSPACE_ADMIN: {
         Capability.WORKSPACE_ADMIN,
@@ -37,11 +39,13 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
         Capability.MEMBER_MANAGE,
         Capability.RUN_READ,
         Capability.RUN_CREATE,
+        Capability.RUN_RECOVER,
     },
     Role.OPERATOR: {
         Capability.WORKSPACE_READ,
         Capability.RUN_READ,
         Capability.RUN_CREATE,
+        Capability.RUN_RECOVER,
     },
     Role.APPROVER: {
         Capability.WORKSPACE_READ,

@@ -25,6 +25,10 @@ def main() -> None:
         tenant_id=TENANT_ID,
         actor_id="00000000-0000-0000-0000-000000000000",
     ) as conn:
+        conn.execute("delete from dead_letters")
+        conn.execute("delete from checkpoints")
+        conn.execute("delete from inbox_messages")
+        conn.execute("delete from outbox_messages")
         conn.execute("delete from execution_events")
         conn.execute("delete from task_attempts")
         conn.execute("delete from task_dependencies")

@@ -40,6 +40,7 @@ async function main() {
   }
 
   await run("docker", ["compose", "up", "-d", "postgres"]);
+  await run("docker", ["compose", "up", "-d", "redis"]);
   await run("pnpm", ["--filter", "@forge/api", "db:migrate"]);
   await run("pnpm", ["--filter", "@forge/api", "db:seed"]);
 
@@ -47,8 +48,8 @@ async function main() {
   console.log("Forge demo is starting with external integrations disabled.");
   console.log("Web:    http://127.0.0.1:3000");
   console.log("API:    http://127.0.0.1:8000/health/ready");
-  console.log("Demo:   choose Alice Admin, create a deterministic run, then advance ready tasks.");
-  console.log("Worker: health shell runs at startup in its process logs.");
+  console.log("Demo:   choose Alice Admin, create a run, then refresh to watch worker execution.");
+  console.log("Worker: local Redis queue, leases, checkpoints, recovery, and dead letters are active.");
   console.log("");
 
   const api = spawn("pnpm", ["--filter", "@forge/api", "dev"], {

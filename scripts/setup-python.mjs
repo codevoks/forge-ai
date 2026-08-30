@@ -26,5 +26,6 @@ run(python, [
   "mypy==1.17.1",
   "pytest==8.4.1",
   "pytest-cov==6.2.1",
+  "redis==5.2.1",
   "ruff==0.12.9"
 ]);

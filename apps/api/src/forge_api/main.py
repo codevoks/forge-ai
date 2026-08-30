@@ -3,7 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from forge_api.api.error_handlers import install_error_handlers
 from forge_api.api.rate_limit import LocalRateLimitMiddleware
-from forge_api.api.routes import dev_oidc, health, identity, runs, tenants, workflows, workspaces
+from forge_api.api.routes import (
+    dev_oidc,
+    health,
+    identity,
+    operations,
+    runs,
+    tenants,
+    workflows,
+    workspaces,
+)
 from forge_api.config import Settings
 
 
@@ -28,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(dev_oidc.router)
     app.include_router(identity.router)
+    app.include_router(operations.router)
     app.include_router(tenants.router)
     app.include_router(workspaces.router)
     app.include_router(workflows.router)

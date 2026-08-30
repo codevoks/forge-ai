@@ -16,9 +16,7 @@ def seeded_workflow(client: TestClient, issuer: DevIssuer, subject: str = "alice
     workflows = client.get("/v1/workflows", headers=auth_headers(issuer, subject)).json()[
         "workflow_versions"
     ]
-    return next(
-        workflow for workflow in workflows if workflow["name"] == "Incident Response Demo"
-    )
+    return next(workflow for workflow in workflows if workflow["name"] == "Incident Response Demo")
 
 
 def test_unsigned_jwt_is_rejected(client: TestClient, settings: Settings) -> None:
@@ -188,5 +186,40 @@ def test_phase2_rls_blocks_runs_without_scope(
 
     with database.transaction() as conn:
         rows = conn.execute("select id from runs").fetchall()
+
+    assert rows == []
+
+
+def test_viewer_cannot_trigger_recovery_scan(client: TestClient, issuer: DevIssuer) -> None:
+    response = client.post("/v1/operations/recovery:scan", headers=auth_headers(issuer, "bob"))
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "recovery_forbidden"
+
+
+def test_viewer_cannot_inspect_dead_letters(client: TestClient, issuer: DevIssuer) -> None:
+    response = client.get("/v1/operations/dead-letters", headers=auth_headers(issuer, "bob"))
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "recovery_forbidden"
+
+
+def test_phase3_rls_blocks_outbox_without_scope(
+    database: Database, client: TestClient, issuer: DevIssuer
+) -> None:
+    workflow = seeded_workflow(client, issuer)
+    created = client.post(
+        "/v1/runs",
+        headers=auth_headers(issuer, "alice") | {"Idempotency-Key": "rls-outbox-source"},
+        json={
+            "workspace_id": workflow["workspace_id"],
+            "workflow_version_id": workflow["id"],
+            "objective": "Create outbox rows for RLS inspection.",
+        },
+    )
+    assert created.status_code == 201
+
+    with database.transaction() as conn:
+        rows = conn.execute("select id from outbox_messages").fetchall()
 
     assert rows == []

@@ -54,7 +54,11 @@ def test_seeded_workflow_is_listed_with_dag(client: TestClient, issuer: DevIssue
     response = client.get("/v1/workflows", headers=headers(issuer, "alice"))
 
     assert response.status_code == 200
-    workflow = response.json()["workflow_versions"][0]
+    workflow = next(
+        workflow
+        for workflow in response.json()["workflow_versions"]
+        if workflow["name"] == "Incident Response Demo"
+    )
     assert workflow["name"] == "Incident Response Demo"
     assert [step["key"] for step in workflow["steps"]] == [
         "collect_logs",

@@ -4,15 +4,24 @@ import { useState } from "react";
 import type { ActorSummary } from "@forge/shared-types";
 import {
   advanceRun,
+  cancelRun,
   createRun,
+  getRun,
   getDemoToken,
   getMe,
+  getWorkerState,
+  listDeadLetters,
   listEvents,
   listTasks,
   listWorkflows,
+  requeueDeadLetter,
+  runRecoveryScan,
+  type DeadLetter,
   type ExecutionEvent,
+  type RecoveryScan,
   type RunSummary,
   type TaskSummary,
+  type WorkerState,
   type WorkflowVersion
 } from "../lib/api";
 
@@ -27,6 +36,12 @@ const panelClass =
 const cardClass = "rounded-2xl border border-zinc-800 bg-[#141417] p-4";
 const pillClass = "rounded-full border border-violet-400/25 bg-violet-400/10 px-2 py-1 text-xs text-violet-200";
 
+function hasCapability(actor: ActorSummary | null, capability: string) {
+  return Boolean(
+    actor?.workspaces.some((workspace) => workspace.capabilities.includes(capability))
+  );
+}
+
 export default function Home() {
   const [actor, setActor] = useState<ActorSummary | null>(null);
   const [selected, setSelected] = useState<DemoSubject>("alice");
@@ -37,6 +52,9 @@ export default function Home() {
   const [run, setRun] = useState<RunSummary | null>(null);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [events, setEvents] = useState<ExecutionEvent[]>([]);
+  const [workerState, setWorkerState] = useState<WorkerState | null>(null);
+  const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
+  const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
 
   async function loadIdentity(subject: DemoSubject) {
     setSelected(subject);
@@ -45,6 +63,9 @@ export default function Home() {
     setTasks([]);
     setEvents([]);
     setWorkflows([]);
+    setWorkerState(null);
+    setDeadLetters([]);
+    setRecovery(null);
     setStatus("Loading signed local token and workspace scope...");
     try {
       const nextToken = await getDemoToken(subject);
@@ -53,6 +74,7 @@ export default function Home() {
       setToken(nextToken);
       setActor(me);
       setWorkflows(workflowVersions);
+      await refreshOperations(nextToken, me);
       setStatus("Authenticated through the local OIDC/JWKS path.");
     } catch (caught) {
       setActor(null);
@@ -62,14 +84,32 @@ export default function Home() {
     }
   }
 
-  async function refreshRunState(nextRun: RunSummary) {
+  async function refreshOperations(activeToken = token, activeActor = actor) {
+    if (!activeToken) {
+      return;
+    }
+    const nextWorkerState = await getWorkerState(activeToken);
+    setWorkerState(nextWorkerState);
+    if (hasCapability(activeActor, "run.recover")) {
+      setDeadLetters(await listDeadLetters(activeToken));
+    } else {
+      setDeadLetters([]);
+    }
+  }
+
+  async function refreshRunState(runId: string) {
+    if (!token) {
+      return;
+    }
+    const nextRun = await getRun(token, runId);
     setRun(nextRun);
     const [nextTasks, nextEvents] = await Promise.all([
-      listTasks(token, nextRun.id),
-      listEvents(token, nextRun.id)
+      listTasks(token, runId),
+      listEvents(token, runId)
     ]);
     setTasks(nextTasks);
     setEvents(nextEvents);
+    await refreshOperations();
   }
 
   async function createDeterministicRun() {
@@ -82,10 +122,11 @@ export default function Home() {
       const nextRun = await createRun(token, {
         workspace_id: workflows[0].workspace_id,
         workflow_version_id: workflows[0].id,
-        objective: "Demonstrate deterministic Phase 2 workflow execution."
+        objective: "Demonstrate durable local worker execution."
       });
-      await refreshRunState(nextRun);
-      setStatus("Run created. Root tasks are ready based on dependency evaluation.");
+      await refreshRunState(nextRun.id);
+      setStatus("Run created and queued. The local worker can execute it asynchronously.");
+      window.setTimeout(() => void refreshRunState(nextRun.id), 1500);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unknown error");
       setStatus("Run command failed safely.");
@@ -100,7 +141,7 @@ export default function Home() {
     setStatus("Advancing one ready task through deterministic in-process execution...");
     try {
       const nextRun = await advanceRun(token, run.id);
-      await refreshRunState(nextRun);
+      await refreshRunState(nextRun.id);
       setStatus(
         nextRun.status === "succeeded"
           ? "Run succeeded. All task transitions and events are persisted."
@@ -112,10 +153,78 @@ export default function Home() {
     }
   }
 
+  async function refreshCurrentRun() {
+    if (!run) {
+      return;
+    }
+    setError("");
+    setStatus("Refreshing run, task, event, and worker state from the API...");
+    try {
+      await refreshRunState(run.id);
+      setStatus("Latest durable state loaded from PostgreSQL.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Refresh failed safely.");
+    }
+  }
+
+  async function cancelCurrentRun() {
+    if (!run || !token) {
+      return;
+    }
+    setError("");
+    setStatus("Requesting cancellation through the persisted run state machine...");
+    try {
+      const nextRun = await cancelRun(token, run.id, "operator requested local demo cancellation");
+      await refreshRunState(nextRun.id);
+      setStatus("Cancellation converged. Queued work will not start new task execution.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Cancellation failed safely.");
+    }
+  }
+
+  async function scanRecovery() {
+    if (!token) {
+      return;
+    }
+    setError("");
+    setStatus("Running bounded recovery scan...");
+    try {
+      const scan = await runRecoveryScan(token);
+      setRecovery(scan);
+      await refreshOperations();
+      if (run) {
+        await refreshRunState(run.id);
+      }
+      setStatus("Recovery scan completed and persisted its findings.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Recovery scan was denied or failed safely.");
+    }
+  }
+
+  async function retryDeadLetter(deadLetterId: string) {
+    if (!token) {
+      return;
+    }
+    setError("");
+    setStatus("Requeueing sanitized dead letter through operator recovery...");
+    try {
+      const nextRun = await requeueDeadLetter(token, deadLetterId);
+      await refreshRunState(nextRun.id);
+      setStatus("Dead letter was requeued. A new outbox message is ready for the worker.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Dead-letter requeue failed safely.");
+    }
+  }
+
   const canCreateRun = actor?.workspaces.some(
     (workspace) =>
       workspace.id === workflows[0]?.workspace_id && workspace.capabilities.includes("run.create")
   );
+  const canRecover = hasCapability(actor, "run.recover");
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(167,139,250,0.16),transparent_32rem),linear-gradient(180deg,#09090b_0%,#050505_44%)] px-6 py-8">
@@ -123,7 +232,7 @@ export default function Home() {
         <section>
           <p className="text-sm text-zinc-400">Forge AI control plane</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-50">
-            Identity, tenancy, and deterministic workflow execution
+            Identity, tenancy, and durable local workflow execution
           </h1>
         </section>
 
@@ -182,6 +291,107 @@ export default function Home() {
           </section>
         ) : null}
 
+        {actor && workerState ? (
+          <section className={panelClass}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-zinc-400">Durable worker plane</p>
+                <h2 className="mt-1 text-xl font-semibold text-zinc-50">
+                  PostgreSQL outbox, Redis queue, leases, checkpoints, and recovery
+                </h2>
+                <p className="mt-2 text-sm text-zinc-400">
+                  Counts are read from the API under the selected identity and workspace scope.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button className={buttonBase} onClick={() => void refreshOperations()}>
+                  Refresh worker state
+                </button>
+                <button
+                  className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
+                  disabled={!canRecover}
+                  onClick={() => void scanRecovery()}
+                >
+                  Run recovery scan
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+              <article className={cardClass}>
+                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Outbox pending</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                  {workerState.outbox.unpublished}
+                </p>
+              </article>
+              <article className={cardClass}>
+                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Outbox sent</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                  {workerState.outbox.published}
+                </p>
+              </article>
+              <article className={cardClass}>
+                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Running</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                  {workerState.attempts.running ?? 0}
+                </p>
+              </article>
+              <article className={cardClass}>
+                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Checkpoints</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                  {workerState.checkpoints}
+                </p>
+              </article>
+              <article className={cardClass}>
+                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Dead letters</p>
+                <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                  {workerState.dead_letters}
+                </p>
+              </article>
+            </div>
+
+            {recovery ? (
+              <p className="mt-4 text-sm text-zinc-300">
+                Last recovery scan: expired leases {recovery.expired_leases}, due retries{" "}
+                {recovery.due_retries}, republished ready tasks{" "}
+                {recovery.republished_ready_tasks}.
+              </p>
+            ) : null}
+
+            {canRecover && deadLetters.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
+                <h3 className="font-semibold text-zinc-50">Dead-letter recovery</h3>
+                <div className="mt-3 grid gap-2">
+                  {deadLetters.slice(0, 3).map((deadLetter) => (
+                    <article
+                      className="rounded-xl border border-zinc-800 bg-[#0d0d0f] p-3"
+                      key={deadLetter.id}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-violet-200">{deadLetter.reason}</p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            Payload is sanitized; task input and secrets are not displayed.
+                          </p>
+                        </div>
+                        <button
+                          className={`${buttonBase} ${
+                            deadLetter.requeued_at ? "opacity-50" : activeButton
+                          }`}
+                          disabled={Boolean(deadLetter.requeued_at)}
+                          onClick={() => void retryDeadLetter(deadLetter.id)}
+                        >
+                          {deadLetter.requeued_at ? "Requeued" : "Requeue"}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+
         {actor && workflows.length > 0 ? (
           <section className={panelClass}>
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -225,13 +435,29 @@ export default function Home() {
                   {run.version}
                 </p>
               </div>
-              <button
-                className={`${buttonBase} ${run.status === "running" ? activeButton : "opacity-50"}`}
-                disabled={run.status !== "running"}
-                onClick={() => void advanceDeterministicRun()}
-              >
-                Advance one ready task
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button className={buttonBase} onClick={() => void refreshCurrentRun()}>
+                  Refresh run state
+                </button>
+                <button
+                  className={`${buttonBase} ${
+                    run.status === "running" ? activeButton : "opacity-50"
+                  }`}
+                  disabled={run.status !== "running"}
+                  onClick={() => void cancelCurrentRun()}
+                >
+                  Cancel run
+                </button>
+                <button
+                  className={`${buttonBase} ${
+                    run.status === "running" ? activeButton : "opacity-50"
+                  }`}
+                  disabled={run.status !== "running"}
+                  onClick={() => void advanceDeterministicRun()}
+                >
+                  Manual fallback advance
+                </button>
+              </div>
             </div>
 
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">

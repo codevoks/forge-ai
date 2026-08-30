@@ -18,6 +18,10 @@ class RunCreateRequest(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
 
 
+class RunCancelRequest(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+
 @router.get("")
 def list_runs(
     actor: Annotated[ActorContext, Depends(get_actor)],
@@ -65,6 +69,16 @@ def list_events(
     database: Annotated[Database, Depends(get_database)],
 ) -> dict[str, object]:
     return {"events": RunService(database).list_events(actor, run_id)}
+
+
+@router.post("/{run_id}:cancel")
+def cancel_run(
+    run_id: str,
+    payload: RunCancelRequest,
+    actor: Annotated[ActorContext, Depends(get_actor)],
+    database: Annotated[Database, Depends(get_database)],
+) -> dict[str, object]:
+    return {"run": RunService(database).cancel(actor, run_id, payload.reason)}
 
 
 @router.post("/{run_id}:advance")

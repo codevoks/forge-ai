@@ -48,7 +48,7 @@ Infrastructure tooling follows the same split: local `format`, `validate`, polic
 
 ## Reproducible demo contract
 
-The repository will evolve one top-level `pnpm demo` entry point. Phase 1 owns the command skeleton and local health/identity demonstration. The current demo also seeds a deterministic workflow version and exposes local run creation/advancement through the web and API. Later phases extend the same contract to start or verify required local services, run queued workers, and print the exact browser/API inspection path. The command must be safe to repeat and must never activate live integrations.
+The repository will evolve one top-level `pnpm demo` entry point. Phase 1 owns the command skeleton and local health/identity demonstration. The current demo starts local PostgreSQL and Redis, runs migrations and seed data, starts the API, starts the worker process, and starts the web UI. It exposes local run creation, queued worker execution, worker-state inspection, cancellation, recovery scan, and dead-letter recovery through the web/API. Later phases extend the same command without activating live integrations. The command must be safe to repeat and must never activate live integrations.
 
 Docker is preferred where it gives a reproducible local service boundary, but the demo documentation must expose resource requirements and direct component commands for debugging. Optional heavyweight services and local models belong in opt-in profiles. PostgreSQL and Redis remain the core local infrastructure; additional self-hosted components are introduced only in their owning phases.
 
