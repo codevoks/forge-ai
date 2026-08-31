@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 
 from forge_api.config import Settings
 from forge_api.infrastructure.database import Database
+from forge_api.infrastructure.planning_repositories import PromptRegistryRepository
 from forge_api.infrastructure.repositories import IdentityRepository, TenantRepository
 from forge_api.infrastructure.tool_repositories import ToolRegistryRepository
 
@@ -29,6 +30,11 @@ def main() -> None:
         tenant_id=TENANT_ID,
         actor_id="00000000-0000-0000-0000-000000000000",
     ) as conn:
+        conn.execute("delete from plan_edges")
+        conn.execute("delete from plan_nodes")
+        conn.execute("delete from plan_versions")
+        conn.execute("delete from model_calls")
+        conn.execute("delete from prompt_versions")
         conn.execute("delete from evidence_items")
         conn.execute("delete from tool_invocations")
         conn.execute("delete from run_tool_grants")
@@ -128,6 +134,7 @@ def main() -> None:
             ),
         )
         ToolRegistryRepository(conn).sync_code_registered_tools()
+        PromptRegistryRepository(conn).sync_builtin_prompts()
         steps = [
             ("collect_logs", "Collect logs", "deterministic"),
             ("inspect_metrics", "Inspect metrics", "deterministic"),

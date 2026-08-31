@@ -1,6 +1,8 @@
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
+from uuid import uuid4
 
+import pytest
 from conftest import auth_headers
 from fastapi.testclient import TestClient
 
@@ -11,6 +13,45 @@ from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.dev_issuer import DevIssuer
 from forge_api.infrastructure.queue import InMemoryQueue
 from forge_api.infrastructure.workflow_repositories import OutboxRepository, WorkerRepository
+
+
+def cleanup_runtime_state(database: Database, settings: Settings) -> None:
+    with database.transaction(worker_id=settings.worker_id) as conn:
+        conn.execute("delete from dead_letters")
+        conn.execute("delete from checkpoints")
+        conn.execute("delete from inbox_messages")
+        conn.execute("delete from outbox_messages")
+        conn.execute(
+            """
+            update task_attempts
+            set status = 'abandoned', completed_at = now()
+            where status = 'running'
+            """
+        )
+        conn.execute(
+            """
+            update tasks
+            set status = 'cancelled', updated_at = now()
+            where status in ('pending', 'ready', 'running', 'retry_wait', 'failed')
+              and run_id in (
+                select id from runs where status in ('created', 'running', 'failed')
+              )
+            """
+        )
+        conn.execute(
+            """
+            update runs
+            set status = 'cancelled', completed_at = now(), updated_at = now()
+            where status in ('created', 'running', 'failed')
+            """
+        )
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_state(database: Database, settings: Settings) -> Iterator[None]:
+    cleanup_runtime_state(database, settings)
+    yield
+    cleanup_runtime_state(database, settings)
 
 
 def headers(issuer: DevIssuer, subject: str = "alice", key: str | None = None) -> dict[str, str]:
@@ -39,7 +80,7 @@ def publish_workflow(
         step["input"] = {"failure_mode": failure_mode}
     response = client.post(
         "/v1/workflows",
-        headers=headers(issuer, key=key),
+        headers=headers(issuer, key=f"{key}-{uuid4()}"),
         json={
             "workspace_id": base["workspace_id"],
             "name": name,
@@ -61,7 +102,7 @@ def create_run(
     selected = workflow or seeded_workflow(client, issuer)
     response = client.post(
         "/v1/runs",
-        headers=headers(issuer, key=key),
+        headers=headers(issuer, key=f"{key}-{uuid4()}"),
         json={
             "workspace_id": selected["workspace_id"],
             "workflow_version_id": selected["id"],

@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "../../.venv/bin/python -m compileall src tests",
+    "demo:planning": "../../.venv/bin/python -m forge_api.scripts.demo_planning",
     "demo:recovery": "../../.venv/bin/python -m forge_api.scripts.demo_recovery",
     "demo:tools": "../../.venv/bin/python -m forge_api.scripts.demo_tools",
     "db:migrate": "../../.venv/bin/python -m forge_api.scripts.migrate",

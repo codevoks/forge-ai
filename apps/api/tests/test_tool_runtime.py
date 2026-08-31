@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from typing import Any
+from uuid import uuid4
 
 from conftest import auth_headers
 from fastapi.testclient import TestClient
@@ -32,7 +33,7 @@ def create_run(
 ) -> Mapping[str, Any]:
     response = client.post(
         "/v1/runs",
-        headers=headers(issuer, key=key),
+        headers=headers(issuer, key=f"{key}-{uuid4()}"),
         json={
             "workspace_id": workflow["workspace_id"],
             "workflow_version_id": workflow["id"],

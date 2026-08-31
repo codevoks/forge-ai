@@ -40,6 +40,8 @@ Every crossing authenticates its caller where possible, validates typed/size-bou
 
 Current typed-tool runtime implementation enforces the early subset of this model with code-registered tools, strict Pydantic input/output schemas, run-scoped grants, risk labels, local deterministic adapters, invocation action hashes, idempotency keys, `outcome_unknown` recording for ambiguous simulated effects, RLS-protected invocation/evidence inspection, and explicit trust labels such as `untrusted_tool_output`. High-risk irreversible side effects, human approvals, secret resolution, network egress tools, planner-selected calls, MCP resources, and live providers remain unavailable until their owning phases.
 
+Current structured-planning implementation adds a provider-neutral `ModelProvider` port, deterministic fake planner, optional live-provider adapter that fails closed while external integrations are disabled, prompt/schema version registry, bounded context builder, strict structured-output parser, semantic DAG/tool validation, immutable `plan_versions`, RLS-protected `model_calls`, and execution events for plan acceptance/rejection. The planner may propose only; it cannot execute tools, increase permissions, change budgets, or mutate tasks. Hallucinated tool names/versions, cyclic DAGs, malformed output, model refusal, cross-tenant reads, viewer planning attempts, and prompt-injection attempts are covered by adversarial tests.
+
 ## Prompt-injection controls
 
 1. Keep policy/tool capability outside natural-language prompts and enforce it after every model decision.

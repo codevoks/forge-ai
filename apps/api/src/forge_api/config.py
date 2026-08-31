@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     worker_tick_seconds: float = 1.0
     task_lease_seconds: int = 30
     task_max_attempts: int = 3
+    model_provider: Literal["fake", "openai_compatible"] = "fake"
+    live_model_base_url: str = "https://api.openai.com/v1"
+    live_model_name: str = "gpt-4o-mini"
+    live_model_api_key: str = ""
     oidc_issuer: str = "http://forge.local/oidc"
     oidc_audience: str = "forge-local"
     oidc_jwks_path: Path = Field(default=Path("local/jwks.json"))
@@ -26,3 +30,7 @@ class Settings(BaseSettings):
     def assert_zero_cost_safe(self) -> None:
         if self.external_integrations != "disabled":
             raise RuntimeError("Default Forge commands require external integrations disabled.")
+        if self.model_provider != "fake":
+            raise RuntimeError(
+                "Default Forge commands require the deterministic fake model provider."
+            )

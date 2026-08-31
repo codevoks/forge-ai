@@ -4,6 +4,7 @@ import process from "node:process";
 const env = {
   ...process.env,
   FORGE_EXTERNAL_INTEGRATIONS: "disabled",
+  FORGE_MODEL_PROVIDER: "fake",
   FORGE_DATABASE_URL:
     process.env.FORGE_DATABASE_URL ??
     "postgresql://forge_runtime:forge_runtime@localhost:55432/forge",
@@ -49,6 +50,7 @@ async function main() {
   console.log("Web:    http://127.0.0.1:3000");
   console.log("API:    http://127.0.0.1:8000/health/ready");
   console.log("Demo:   choose Alice Admin, create a run, then refresh to watch worker execution.");
+  console.log("Plan:   create a run, then generate a fake structured plan or adversarial rejection.");
   console.log("Worker: local Redis queue, leases, checkpoints, recovery, and dead letters are active.");
   console.log("");
 

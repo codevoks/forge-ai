@@ -13,15 +13,20 @@ import {
   listDeadLetters,
   listEvidence,
   listEvents,
+  listModelCalls,
+  listPlans,
   listTasks,
   listToolInvocations,
   listTools,
   listWorkflows,
+  planRun,
   requeueDeadLetter,
   runRecoveryScan,
   type DeadLetter,
   type EvidenceItem,
   type ExecutionEvent,
+  type ModelCall,
+  type PlanVersion,
   type RecoveryScan,
   type RunSummary,
   type TaskSummary,
@@ -32,6 +37,13 @@ import {
 } from "../lib/api";
 
 type DemoSubject = "alice" | "bob" | "mallory";
+type PlanningScenario =
+  | "valid"
+  | "repairable_malformed"
+  | "hallucinated_tool"
+  | "cyclic_plan"
+  | "refusal"
+  | "prompt_injection";
 
 const buttonBase =
   "cursor-pointer rounded-full border border-zinc-800 bg-[#0d0d0f] px-3.5 py-2 text-sm font-medium text-zinc-100 transition duration-150 hover:-translate-y-0.5 hover:border-zinc-700 hover:bg-[#141417]";
@@ -63,6 +75,8 @@ export default function Home() {
   const [tools, setTools] = useState<ToolSummary[]>([]);
   const [toolInvocations, setToolInvocations] = useState<ToolInvocation[]>([]);
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
+  const [plans, setPlans] = useState<PlanVersion[]>([]);
+  const [modelCalls, setModelCalls] = useState<ModelCall[]>([]);
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
   const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
@@ -75,6 +89,8 @@ export default function Home() {
     setEvents([]);
     setToolInvocations([]);
     setEvidenceItems([]);
+    setPlans([]);
+    setModelCalls([]);
     setWorkflows([]);
     setSelectedWorkflowId("");
     setTools([]);
@@ -132,6 +148,12 @@ export default function Home() {
     ]);
     setTasks(nextTasks);
     setEvents(nextEvents);
+    const [nextPlans, nextModelCalls] = await Promise.all([
+      listPlans(token, runId),
+      listModelCalls(token, runId)
+    ]);
+    setPlans(nextPlans);
+    setModelCalls(nextModelCalls);
     const hasToolTask = nextTasks.some((task) => task.kind === "tool");
     if (hasToolTask) {
       const [nextInvocations, nextEvidence] = await Promise.all([
@@ -259,6 +281,28 @@ export default function Home() {
     }
   }
 
+  async function createPlannerProposal(fakeScenario: PlanningScenario, allowCorrection = true) {
+    if (!run || !token) {
+      return;
+    }
+    setError("");
+    setStatus(`Generating ${fakeScenario} structured plan with deterministic fake model...`);
+    try {
+      const result = await planRun(token, run.id, fakeScenario, allowCorrection);
+      await refreshRunState(run.id);
+      setStatus(
+        result.plan.status === "validated"
+          ? `Plan v${result.plan.version_number} validated. Provider: fake, live calls: false, cost: 0.`
+          : `Plan v${result.plan.version_number} rejected safely: ${result.plan.validation_errors.join(
+              "; "
+            )}`
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Planning command failed safely.");
+    }
+  }
+
   const canCreateRun = actor?.workspaces.some(
     (workspace) =>
       workspace.id === workflows.find((workflow) => workflow.id === selectedWorkflowId)?.workspace_id &&
@@ -266,6 +310,8 @@ export default function Home() {
   );
   const canRecover = hasCapability(actor, "run.recover");
   const selectedWorkflow = workflows.find((workflow) => workflow.id === selectedWorkflowId);
+  const latestPlan = plans[0];
+  const latestModelCall = modelCalls[0];
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(167,139,250,0.16),transparent_32rem),linear-gradient(180deg,#09090b_0%,#050505_44%)] px-6 py-8">
@@ -499,6 +545,8 @@ export default function Home() {
                     setEvents([]);
                     setToolInvocations([]);
                     setEvidenceItems([]);
+                    setPlans([]);
+                    setModelCalls([]);
                   }}
                 >
                   {workflow.name}
@@ -564,6 +612,142 @@ export default function Home() {
                   <p className="mt-2 text-sm text-zinc-400">Status: {task.status}</p>
                 </article>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm text-zinc-400">Structured planner</p>
+                  <h3 className="mt-1 font-semibold text-zinc-50">
+                    Fake model proposals, real validation, persisted model-call ledger
+                  </h3>
+                  <p className="mt-2 text-sm text-zinc-400">
+                    The model proposes a plan only. Runtime authorization, tools, budgets, and
+                    execution remain controlled by Forge application code.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className={activeButton + " cursor-pointer rounded-full px-3.5 py-2 text-sm"}
+                    onClick={() => void createPlannerProposal("valid")}
+                  >
+                    Generate valid plan
+                  </button>
+                  <button
+                    className={buttonBase}
+                    onClick={() => void createPlannerProposal("repairable_malformed")}
+                  >
+                    Repair malformed output
+                  </button>
+                  <button
+                    className={buttonBase}
+                    onClick={() => void createPlannerProposal("prompt_injection")}
+                  >
+                    Prompt-injection scenario
+                  </button>
+                  <button
+                    className={buttonBase}
+                    onClick={() => void createPlannerProposal("hallucinated_tool", false)}
+                  >
+                    Reject hallucinated tool
+                  </button>
+                  <button
+                    className={buttonBase}
+                    onClick={() => void createPlannerProposal("cyclic_plan", false)}
+                  >
+                    Reject cycle
+                  </button>
+                </div>
+              </div>
+
+              {latestPlan ? (
+                <div className="mt-4 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+                  <article className={cardClass}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={pillClass}>plan v{latestPlan.version_number}</span>
+                      <span
+                        className={
+                          latestPlan.status === "validated"
+                            ? pillClass
+                            : "rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-1 text-xs text-rose-200"
+                        }
+                      >
+                        {latestPlan.status}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm text-zinc-300">{latestPlan.summary}</p>
+                    {latestPlan.validation_errors.length > 0 ? (
+                      <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-300">
+                        {latestPlan.validation_errors.map((validationError) => (
+                          <li key={validationError}>{validationError}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <div className="mt-4 grid gap-2">
+                      {latestPlan.nodes.map((node) => (
+                        <div
+                          className="rounded-xl border border-zinc-800 bg-black/30 p-3"
+                          key={node.id}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs text-violet-200">{node.key}</span>
+                            <span className={mutedPillClass}>{node.kind}</span>
+                            {node.tool_name ? (
+                              <span className={pillClass}>
+                                {node.tool_name} v{node.tool_version}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-2 text-sm font-medium text-zinc-100">{node.title}</p>
+                          <p className="mt-1 text-xs text-zinc-500">{node.rationale}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+
+                  <article className={cardClass}>
+                    <h4 className="font-semibold text-zinc-50">Model call evidence</h4>
+                    {latestModelCall ? (
+                      <div className="mt-3 grid gap-2 text-sm text-zinc-300">
+                        <p>
+                          Provider:{" "}
+                          <span className="font-mono text-violet-200">
+                            {latestModelCall.provider}
+                          </span>
+                        </p>
+                        <p>Model: {latestModelCall.model_name}</p>
+                        <p>Status: {latestModelCall.status}</p>
+                        <p>Tokens: {latestModelCall.total_tokens}</p>
+                        <p>Estimated cost minor units: {latestModelCall.estimated_cost_minor}</p>
+                        <p>Live provider call: {String(latestModelCall.live_provider)}</p>
+                        {latestModelCall.error_type ? (
+                          <p className="text-rose-300">
+                            {latestModelCall.error_type}: {latestModelCall.error_message}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {latestPlan.edges.length > 0 ? (
+                      <div className="mt-4">
+                        <p className="text-sm font-medium text-zinc-100">Plan edges</p>
+                        <ol className="mt-2 grid gap-1 text-xs text-zinc-400">
+                          {latestPlan.edges.map((edge) => (
+                            <li key={`${edge.from}-${edge.to}`}>
+                              <span className="font-mono text-violet-200">{edge.from}</span> →{" "}
+                              <span className="font-mono text-violet-200">{edge.to}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    ) : null}
+                  </article>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-zinc-500">
+                  Create a run, then generate a structured plan to inspect persisted planner
+                  output.
+                </p>
+              )}
             </div>
 
             <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">

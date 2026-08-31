@@ -47,6 +47,16 @@ Dependencies point inward: infrastructure and delivery depend on application/dom
 5. It validates/sanitizes output, persists outcome/event/outbox atomically, then acknowledges the queue message.
 6. On timeout/crash, lease recovery makes the unit eligible again. Idempotency controls determine whether an effect may be retried, reconciled, or must remain `outcome_unknown`.
 
+## Planning path
+
+1. API verifies the actor and requires an idempotency key for `POST /v1/runs/{run_id}:plan`.
+2. `PlannerService` authorizes the actor against the run workspace using the same capability model as run creation.
+3. The context builder loads a versioned planner prompt, active tool projection, objective, workflow name, and bounded evidence summaries. It does not include secrets, raw provider payloads, or policy internals.
+4. A `ModelProvider` implementation returns a structured result. The default deterministic fake provider supports success, malformed-output repair, hallucinated-tool rejection, cyclic-plan rejection, refusal, and prompt-injection scenarios with no network call.
+5. The parser enforces the structured schema. `PlanValidator` then enforces DAG bounds, acyclicity, and exact active tool name/version membership.
+6. Forge persists a `model_call` for every attempt and a `plan_version` with validated or rejected status. Validated plans store nodes and edges; rejected plans store safe validation errors. Existing validated plans are superseded rather than rewritten.
+7. The planner does not execute tools, mutate tasks, expand authority, or bypass approvals. Agentic execution remains a later phase built on this proposal boundary.
+
 ## Control plane versus execution plane
 
 - **Control plane:** identity, tenant/workspace administration, workflow/tool registration, policies, credentials references, budgets, approvals.

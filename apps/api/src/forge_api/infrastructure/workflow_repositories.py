@@ -111,6 +111,18 @@ class OutboxRepository:
                    stream_name, payload
             from outbox_messages
             where published_at is null and available_at <= now()
+              and (
+                message_type <> 'task.execute.requested'
+                or exists (
+                  select 1
+                  from tasks t
+                  join runs r on r.id = t.run_id
+                  where t.id = outbox_messages.aggregate_id
+                    and t.run_id = (outbox_messages.payload->>'run_id')::uuid
+                    and r.status = 'running'
+                    and t.status in ('ready', 'retry_wait')
+                )
+              )
             order by created_at
             limit %s
             for update skip locked

@@ -123,6 +123,34 @@ flowchart TD
     VALID -- yes --> INTENT --> EXEC --> RESULT
 ```
 
+## Structured planning sequence
+
+Phase 5 persists model interaction evidence separately from plan versions. A model call can fail or produce an invalid proposal while still leaving an auditable ledger entry. Only validated proposals receive persisted nodes and edges.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator
+    participant API as FastAPI planning route
+    participant APP as PlannerService
+    participant PG as PostgreSQL
+    participant MP as ModelProvider
+    participant VAL as PlanValidator
+
+    Operator->>API: POST /v1/runs/{id}:plan + Idempotency-Key
+    API->>APP: ActorContext + run id + scenario/provider
+    APP->>PG: Authorize run, load prompt version, tools, evidence
+    APP->>MP: StructuredModelRequest
+    MP-->>APP: StructuredModelResult
+    APP->>VAL: Parse schema + validate DAG and allowed tools
+    APP->>PG: Record model_call + plan_version + plan event
+    alt valid
+        APP-->>Operator: validated plan with nodes/edges
+    else rejected
+        APP-->>Operator: rejected plan with safe validation errors
+    end
+```
+
 ## Workflow shape and bounded autonomy
 
 Forge keeps the user/planner work graph acyclic. Model-controlled iteration lives inside one task and is bounded independently, so dependency scheduling and termination remain explainable.

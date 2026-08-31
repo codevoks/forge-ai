@@ -90,6 +90,9 @@ POST /v1/operations/recovery:scan
 GET /v1/tools
 GET /v1/tools/runs/{run_id}/invocations
 GET /v1/tools/runs/{run_id}/evidence
+POST /v1/runs/{run_id}:plan
+GET /v1/runs/{run_id}/plans
+GET /v1/runs/{run_id}/model-calls
 ```
 
 `POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
@@ -105,6 +108,18 @@ Implemented tool tables currently include:
 | `run_tool_grants` | Run-scoped allowlist snapshot | One exact tool version grant per run/tool version; queue possession cannot add authority |
 | `tool_invocations` | Intent/result ledger | Canonical arguments and action hash; logical invocation uniqueness; statuses include `outcome_unknown` |
 | `evidence_items` | Provenance records derived from tool output | Source, trust label, content hash, and bounded summary; raw secrets/provider payloads are not logged |
+
+Implemented structured-planning tables currently include:
+
+| Table | Purpose | Important constraints |
+|---|---|---|
+| `prompt_versions` | Versioned planner prompt and schema registry | Global or tenant/workspace scoped; active/retired status; template is registered by code and never inferred from model output |
+| `model_calls` | Provider-neutral model-call ledger | Request hash and summaries only; normalized status/usage/cost; `live_provider` flag; raw provider output is not stored |
+| `plan_versions` | Immutable run-scoped planner proposal | Monotonic version per run; validated/rejected/superseded status; links to prompt and model call |
+| `plan_nodes` | Validated plan DAG nodes | Inserted only for validated plans; bounded keys/kinds; tool nodes carry exact name and version |
+| `plan_edges` | Validated plan DAG edges | Foreign-keyed to plan nodes; acyclic validation happens before persistence |
+
+`POST /v1/runs/{run_id}:plan` is a planning command, not a provider proxy. It requires `Idempotency-Key`, authorizes the actor against the run workspace, builds a bounded context from the run, allowed tool projection, and evidence summaries, invokes the selected `ModelProvider`, validates structured output, persists the model call and plan version, and appends `plan.validated` or `plan.rejected`. The default provider is the deterministic fake model. Live provider selection fails closed unless external integrations are explicitly enabled.
 
 ## Asynchronous envelope
 

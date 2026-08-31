@@ -1,11 +1,45 @@
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
+from uuid import uuid4
 
+import pytest
 from conftest import auth_headers
 from fastapi.testclient import TestClient
 
+from forge_api.config import Settings
+from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.dev_issuer import DevIssuer
+
+
+@pytest.fixture(autouse=True)
+def isolate_workflow_runtime_state(database: Database, settings: Settings) -> Iterator[None]:
+    with database.transaction(worker_id=settings.worker_id) as conn:
+        conn.execute("delete from inbox_messages")
+        conn.execute("delete from outbox_messages")
+        conn.execute(
+            """
+            update task_attempts
+            set status = 'abandoned', completed_at = now()
+            where status = 'running'
+            """
+        )
+        conn.execute(
+            """
+            update tasks
+            set status = 'cancelled', updated_at = now()
+            where status in ('pending', 'ready', 'running', 'retry_wait')
+              and run_id in (select id from runs where status in ('created', 'running'))
+            """
+        )
+        conn.execute(
+            """
+            update runs
+            set status = 'cancelled', completed_at = now(), updated_at = now()
+            where status in ('created', 'running')
+            """
+        )
+    yield
 
 
 def stable(value: Any) -> str:
@@ -39,7 +73,7 @@ def seeded_workflow_id(client: TestClient, issuer: DevIssuer) -> str:
 def create_run(client: TestClient, issuer: DevIssuer, key: str) -> Mapping[str, Any]:
     response = client.post(
         "/v1/runs",
-        headers=headers(issuer, "alice", key),
+        headers=headers(issuer, "alice", f"{key}-{uuid4()}"),
         json={
             "workspace_id": seeded_workspace_id(client, issuer),
             "workflow_version_id": seeded_workflow_id(client, issuer),

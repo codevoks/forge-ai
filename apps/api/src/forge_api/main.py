@@ -8,6 +8,7 @@ from forge_api.api.routes import (
     health,
     identity,
     operations,
+    planning,
     runs,
     tenants,
     tools,
@@ -44,4 +45,5 @@ def create_app() -> FastAPI:
     app.include_router(workspaces.router)
     app.include_router(workflows.router)
     app.include_router(runs.router)
+    app.include_router(planning.router)
     return app

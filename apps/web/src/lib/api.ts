@@ -125,6 +125,53 @@ export type EvidenceItem = {
   created_at: string;
 };
 
+export type PlanNode = {
+  id: string;
+  key: string;
+  title: string;
+  kind: string;
+  tool_name: string | null;
+  tool_version: number | null;
+  rationale: string;
+  input: Record<string, unknown>;
+};
+
+export type PlanEdge = {
+  from: string;
+  to: string;
+};
+
+export type PlanVersion = {
+  id: string;
+  run_id: string;
+  version_number: number;
+  status: string;
+  objective: string;
+  summary: string;
+  validation_errors: string[];
+  supersedes_plan_version_id: string | null;
+  nodes: PlanNode[];
+  edges: PlanEdge[];
+  created_at: string;
+};
+
+export type ModelCall = {
+  id: string;
+  run_id: string;
+  provider: string;
+  model_name: string;
+  status: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost_minor: number;
+  latency_ms: number;
+  live_provider: boolean;
+  error_type: string | null;
+  error_message: string | null;
+  created_at: string;
+};
+
 async function parseProblem(response: Response): Promise<Error> {
   const problem = (await response.json()) as ProblemDetails;
   return new Error(`${problem.code}: ${problem.message}`);
@@ -247,6 +294,62 @@ export async function listEvents(token: string, runId: string): Promise<Executio
   }
   const payload = (await response.json()) as { events: ExecutionEvent[] };
   return payload.events;
+}
+
+export async function planRun(
+  token: string,
+  runId: string,
+  fakeScenario: "valid" | "repairable_malformed" | "hallucinated_tool" | "cyclic_plan" | "refusal" | "prompt_injection",
+  allowCorrection = true
+): Promise<{ plan: PlanVersion; model_call: ModelCall; corrected: boolean; zero_cost: Record<string, unknown> }> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}:plan`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `demo-plan-${fakeScenario}-${Date.now()}`
+    },
+    body: JSON.stringify({
+      provider: "fake",
+      fake_scenario: fakeScenario,
+      allow_correction: allowCorrection,
+      objective_hint: "Create a bounded structured plan for this local demo run."
+    })
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  return (await response.json()) as {
+    plan: PlanVersion;
+    model_call: ModelCall;
+    corrected: boolean;
+    zero_cost: Record<string, unknown>;
+  };
+}
+
+export async function listPlans(token: string, runId: string): Promise<PlanVersion[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/plans`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { plans: PlanVersion[] };
+  return payload.plans;
+}
+
+export async function listModelCalls(token: string, runId: string): Promise<ModelCall[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/model-calls`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { model_calls: ModelCall[] };
+  return payload.model_calls;
 }
 
 export async function getWorkerState(token: string): Promise<WorkerState> {
