@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from forge_api.api.error_handlers import install_error_handlers
 from forge_api.api.rate_limit import LocalRateLimitMiddleware
 from forge_api.api.routes import (
+    agents,
     approvals,
     dev_oidc,
     health,
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "If-Match"],
     )
     install_error_handlers(app)
+    app.include_router(agents.router)
     app.include_router(health.router)
     app.include_router(dev_oidc.router)
     app.include_router(identity.router)

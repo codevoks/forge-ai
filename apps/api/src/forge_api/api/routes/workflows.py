@@ -14,7 +14,7 @@ router = APIRouter(prefix="/v1/workflows", tags=["workflows"])
 class WorkflowStepRequest(BaseModel):
     key: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=2, max_length=120)
-    kind: Literal["manual", "deterministic", "tool"] = "deterministic"
+    kind: Literal["manual", "deterministic", "tool", "agent"] = "deterministic"
     input: dict[str, Any] = Field(default_factory=dict)
 
 

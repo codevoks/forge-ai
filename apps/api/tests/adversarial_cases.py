@@ -8,6 +8,13 @@ class AdversarialUrlCase:
     reason: str
 
 
+@dataclass(frozen=True)
+class AdversarialAgentCase:
+    scenario: str
+    expected_outcome: str
+    reason: str
+
+
 SSRF_DENIAL_CASES = (
     AdversarialUrlCase(
         url="http://example.com/callback",
@@ -33,5 +40,24 @@ SSRF_DENIAL_CASES = (
         url="https://10.0.0.4/internal",
         expected_code="network_private_address_denied",
         reason="private RFC1918 address must be denied",
+    ),
+)
+
+
+AGENT_ADVERSARIAL_CASES = (
+    AdversarialAgentCase(
+        scenario="unauthorized_tool",
+        expected_outcome="denied",
+        reason="model-proposed tools outside the run grant must fail closed",
+    ),
+    AdversarialAgentCase(
+        scenario="prompt_injection",
+        expected_outcome="contained",
+        reason="hostile objective text cannot become privileged agent instruction",
+    ),
+    AdversarialAgentCase(
+        scenario="unsupported_claim",
+        expected_outcome="denied",
+        reason="consequential agent conclusions require persisted evidence citations",
     ),
 )

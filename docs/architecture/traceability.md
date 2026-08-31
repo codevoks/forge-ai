@@ -17,7 +17,7 @@ This matrix prevents capabilities from disappearing between phase handoffs. Deta
 | Human approval and prompt/indirect/tool-output injection defenses | security threat model | 6 |
 | Exact-action approval binding, separation of duties, approval expiry/rejection, secret-reference redaction, SSRF-ready URL denial | security threat model, data contracts, failure model | 6 |
 | Privilege/secret/SSRF/replay/denial-of-wallet/runaway-loop controls | security threat model | 6; hardened 13 |
-| Bounded agent loop and termination | domain model | 7 |
+| Bounded agent loop, persisted iterations, citations, and termination | domain/data/failure/security contracts | 7 |
 | LangGraph nodes/edges/reducers/tools/checkpoints/interrupts/comparison | decisions Q-004 | 8 |
 | Fake models, golden/adversarial/failure scenarios and behavioral/live eval separation | requirements/decisions | 9 |
 | Plan/tool/task/permission/approval/hallucination/cost/latency metrics | scale/cost contract | 9 |

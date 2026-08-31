@@ -3,14 +3,14 @@ alter table workflow_steps
 
 alter table workflow_steps
   add constraint workflow_steps_kind_check
-  check (kind in ('manual', 'deterministic', 'tool'));
+  check (kind in ('manual', 'deterministic', 'tool', 'agent'));
 
 alter table tasks
   drop constraint if exists tasks_kind_check;
 
 alter table tasks
   add constraint tasks_kind_check
-  check (kind in ('manual', 'deterministic', 'tool'));
+  check (kind in ('manual', 'deterministic', 'tool', 'agent'));
 
 create table if not exists tool_definitions (
   id uuid primary key,

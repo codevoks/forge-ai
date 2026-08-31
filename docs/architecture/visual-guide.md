@@ -205,11 +205,13 @@ flowchart LR
     subgraph AgentTask[Bounded agent loop inside a task]
         P[Perceive selected state + evidence]
         DECIDE{Structured decision}
+        RECORD[Persist model_call + agent_iteration + checkpoint]
         ACT[Authorized tool call]
-        DONE[Complete or fail]
+        DONE[Complete or fail closed]
         P --> DECIDE
-        DECIDE -->|tool call within limits| ACT --> P
-        DECIDE -->|success, failure, budget, timeout, no progress| DONE
+        DECIDE --> RECORD
+        RECORD -->|tool call within grants and limits| ACT --> P
+        RECORD -->|success, invalid, budget, timeout, no progress| DONE
     end
 
     C -. may use .-> AgentTask

@@ -11,6 +11,7 @@ import {
   getDemoToken,
   getMe,
   getWorkerState,
+  listAgentIterations,
   listDeadLetters,
   listEvidence,
   listEvents,
@@ -26,6 +27,7 @@ import {
   rejectRequest,
   runRecoveryScan,
   type ApprovalRequest,
+  type AgentIteration,
   type DeadLetter,
   type EvidenceItem,
   type ExecutionEvent,
@@ -82,6 +84,7 @@ export default function Home() {
   const [plans, setPlans] = useState<PlanVersion[]>([]);
   const [modelCalls, setModelCalls] = useState<ModelCall[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [agentIterations, setAgentIterations] = useState<AgentIteration[]>([]);
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
   const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
@@ -97,6 +100,7 @@ export default function Home() {
     setPlans([]);
     setModelCalls([]);
     setApprovals([]);
+    setAgentIterations([]);
     setWorkflows([]);
     setSelectedWorkflowId("");
     setTools([]);
@@ -112,6 +116,7 @@ export default function Home() {
         listTools(nextToken)
       ]);
       const defaultWorkflow =
+        workflowVersions.find((workflow) => workflow.name === "Bounded Agent Demo") ??
         workflowVersions.find((workflow) => workflow.name === "Typed Tool Demo") ??
         workflowVersions[0];
       setToken(nextToken);
@@ -162,8 +167,10 @@ export default function Home() {
     setPlans(nextPlans);
     setModelCalls(nextModelCalls);
     setApprovals(await listApprovals(token));
-    const hasToolTask = nextTasks.some((task) => task.kind === "tool");
-    if (hasToolTask) {
+    const hasAgentTask = nextTasks.some((task) => task.kind === "agent");
+    setAgentIterations(hasAgentTask ? await listAgentIterations(token, runId) : []);
+    const hasToolOrAgentTask = nextTasks.some((task) => task.kind === "tool" || task.kind === "agent");
+    if (hasToolOrAgentTask) {
       const [nextInvocations, nextEvidence] = await Promise.all([
         listToolInvocations(token, runId),
         listEvidence(token, runId)
@@ -191,6 +198,8 @@ export default function Home() {
         objective:
           selectedWorkflow.name === "Typed Tool Demo"
             ? "Demonstrate typed tool runtime, invocation ledger, and evidence provenance."
+            : selectedWorkflow.name === "Bounded Agent Demo"
+              ? "Demonstrate bounded agentic workflow with fake model, local tools, citations, and zero cost."
             : "Demonstrate durable local worker execution."
       });
       await refreshRunState(nextRun.id);
@@ -618,6 +627,7 @@ export default function Home() {
                     setEvidenceItems([]);
                     setPlans([]);
                     setModelCalls([]);
+                    setAgentIterations([]);
                   }}
                 >
                   {workflow.name}
@@ -684,6 +694,66 @@ export default function Home() {
                 </article>
               ))}
             </div>
+
+            {agentIterations.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-zinc-400">Bounded agent runtime</p>
+                    <h3 className="mt-1 font-semibold text-zinc-50">
+                      Perceive → decide → act → observe, with persisted checkpoints
+                    </h3>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      The fake model proposes structured decisions. Forge validates tool grants,
+                      schemas, budgets, citations, and termination in application code.
+                    </p>
+                  </div>
+                  <span className={pillClass}>{agentIterations.length} iterations</span>
+                </div>
+
+                <div className="mt-4 grid gap-3">
+                  {agentIterations.map((iteration) => (
+                    <article className={cardClass} key={iteration.id}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={pillClass}>iteration {iteration.iteration_number}</span>
+                        <span className={mutedPillClass}>{iteration.decision_type}</span>
+                        <span
+                          className={
+                            iteration.decision_status === "validated"
+                              ? pillClass
+                              : "rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-1 text-xs text-rose-200"
+                          }
+                        >
+                          {iteration.decision_status}
+                        </span>
+                      </div>
+                      <p className="mt-2 break-all font-mono text-xs text-violet-200">
+                        context hash {iteration.context_hash.slice(0, 20)}… · model call{" "}
+                        {iteration.model_call_id.slice(0, 20)}…
+                      </p>
+                      {iteration.validation_errors.length > 0 ? (
+                        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-300">
+                          {iteration.validation_errors.map((validationError) => (
+                            <li key={validationError}>{validationError}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <pre className="mt-3 max-h-44 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
+                        {JSON.stringify(
+                          {
+                            counters: iteration.counters_snapshot,
+                            decision: iteration.decision,
+                            result: iteration.result
+                          },
+                          null,
+                          2
+                        )}
+                      </pre>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {runApprovals.length > 0 ? (
               <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">

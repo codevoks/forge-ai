@@ -55,7 +55,19 @@ Dependencies point inward: infrastructure and delivery depend on application/dom
 4. A `ModelProvider` implementation returns a structured result. The default deterministic fake provider supports success, malformed-output repair, hallucinated-tool rejection, cyclic-plan rejection, refusal, and prompt-injection scenarios with no network call.
 5. The parser enforces the structured schema. `PlanValidator` then enforces DAG bounds, acyclicity, and exact active tool name/version membership.
 6. Forge persists a `model_call` for every attempt and a `plan_version` with validated or rejected status. Validated plans store nodes and edges; rejected plans store safe validation errors. Existing validated plans are superseded rather than rewritten.
-7. The planner does not execute tools, mutate tasks, expand authority, or bypass approvals. Agentic execution remains a later phase built on this proposal boundary.
+7. The planner does not execute tools, mutate tasks, expand authority, or bypass approvals. Bounded agentic execution is implemented separately inside the deterministic worker envelope.
+
+## Bounded agent execution path
+
+1. A published workflow may contain an `agent` task. The run creation transaction snapshots only the exact tool versions declared in that agent task's `allowed_tools`; later model decisions cannot expand the grant set.
+2. The worker claims the agent task with the same lease, fencing, inbox, and outbox mechanics as deterministic/tool tasks.
+3. `AgentRuntime` builds a bounded state from the task objective, allowed tools, counters, budgets, and compacted persisted evidence. Tool output remains untrusted data.
+4. The deterministic fake agent model returns one structured decision per iteration: `tool_call`, `complete`, `fail`, or `request_replan`.
+5. Application code validates the decision schema, run-scoped tool grants, strict tool input schema, budgets, no-progress counters, and completion citations before any action happens.
+6. Every iteration records a model-call ledger entry, an `agent_iterations` row, an execution event, and an `agent_iteration` checkpoint. A validated tool decision then invokes the existing tool runtime, including approval gates where applicable.
+7. The loop terminates on cited completion or fails closed on invalid repeated decisions, budget exhaustion, unsupported citations, ungranted tools, unavailable replan, cancellation, or worker lease/recovery boundaries.
+
+The default path remains zero-cost: `forge-fake-agent-v1` is deterministic, live providers are disabled, and all tool calls use local registered adapters.
 
 ## Control plane versus execution plane
 

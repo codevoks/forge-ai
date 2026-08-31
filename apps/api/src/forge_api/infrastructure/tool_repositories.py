@@ -158,30 +158,28 @@ class RunToolGrantRepository:
     ) -> None:
         registry = ToolRegistryRepository(self.conn)
         for step in workflow_version["steps"]:
-            if step["kind"] != "tool":
-                continue
-            tool_name, tool_version = tool_reference_from_step(step["input"])
-            tool = registry.resolve(name=tool_name, version=tool_version)
-            self.conn.execute(
-                """
-                insert into run_tool_grants
-                  (id, tenant_id, workspace_id, run_id, tool_version_id, tool_name,
-                   tool_version, risk, granted_by)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                on conflict (run_id, tool_version_id) do nothing
-                """,
-                (
-                    str(uuid7()),
-                    tenant_id,
-                    workspace_id,
-                    run_id,
-                    tool["id"],
-                    tool["name"],
-                    tool["version"],
-                    tool["risk"],
-                    actor_id,
-                ),
-            )
+            for tool_name, tool_version in tool_references_from_step(step):
+                tool = registry.resolve(name=tool_name, version=tool_version)
+                self.conn.execute(
+                    """
+                    insert into run_tool_grants
+                      (id, tenant_id, workspace_id, run_id, tool_version_id, tool_name,
+                       tool_version, risk, granted_by)
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    on conflict (run_id, tool_version_id) do nothing
+                    """,
+                    (
+                        str(uuid7()),
+                        tenant_id,
+                        workspace_id,
+                        run_id,
+                        tool["id"],
+                        tool["name"],
+                        tool["version"],
+                        tool["risk"],
+                        actor_id,
+                    ),
+                )
 
     def require_grant(
         self,
@@ -474,3 +472,29 @@ def tool_reference_from_step(step_input: dict[str, Any]) -> tuple[str, int]:
     if not isinstance(arguments, dict):
         raise ProblemError(422, "tool_step_invalid", "Tool arguments must be an object.")
     return tool_name, tool_version
+
+
+def tool_references_from_step(step: dict[str, Any]) -> list[tuple[str, int]]:
+    if step["kind"] == "tool":
+        return [tool_reference_from_step(step["input"])]
+    if step["kind"] != "agent":
+        return []
+    step_input = step["input"]
+    if not isinstance(step_input, dict):
+        raise ProblemError(422, "agent_task_invalid", "Agent step input must be an object.")
+    allowed_tools = step_input.get("allowed_tools", [])
+    if not isinstance(allowed_tools, list):
+        raise ProblemError(422, "agent_task_invalid", "Agent allowed_tools must be a list.")
+    references: list[tuple[str, int]] = []
+    for item in allowed_tools:
+        if not isinstance(item, dict):
+            raise ProblemError(422, "agent_task_invalid", "Agent tool grant must be an object.")
+        try:
+            references.append((str(item["tool_name"]), int(item["tool_version"])))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProblemError(
+                422,
+                "agent_task_invalid",
+                "Agent tool grants require tool_name and tool_version.",
+            ) from exc
+    return references

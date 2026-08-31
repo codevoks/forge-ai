@@ -16,6 +16,7 @@
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @forge/api db:migrate",
     "db:seed": "pnpm --filter @forge/api db:seed",
+    "demo:agentic": "pnpm --filter @forge/api demo:agentic",
     "demo:planning": "pnpm --filter @forge/api demo:planning",
     "demo:approvals": "pnpm --filter @forge/api demo:approvals",
     "demo:tools": "pnpm --filter @forge/api demo:tools"

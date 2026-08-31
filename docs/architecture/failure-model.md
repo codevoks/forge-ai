@@ -71,7 +71,7 @@ The fuller `cancelling -> cancelled` convergence model remains the production ta
 
 ## Checkpoints and recovery
 
-Checkpoints currently occur after successful deterministic task execution and include the task result plus the attempt/fencing identity. Recovery scans are bounded and run under the worker service principal. They:
+Checkpoints currently occur after successful deterministic task execution and after each bounded agent iteration. Deterministic task checkpoints include the task result plus the attempt/fencing identity. Agent checkpoints include schema version, run/task/attempt/iteration identity, decision type/status, context hash, counters snapshot, evidence references, and the next legal action. Recovery scans are bounded and run under the worker service principal. They:
 
 - expire stale running attempts whose leases elapsed;
 - mark those attempts `abandoned`;
@@ -79,7 +79,7 @@ Checkpoints currently occur after successful deterministic task execution and in
 - promote due `retry_wait` tasks;
 - republish ready tasks that have no unpublished outbox message, including after Redis data loss.
 
-Later model/tool phases add checkpoints after validated plan creation, each authorized tool result, and bounded agent iterations. A checkpoint includes schema version, run/task/plan/iteration identity, relevant state, evidence references, budgets, and next legal action. Recovery revalidates current policy, cancellation, approval, tool version, and schema before resuming.
+Model/tool phases add checkpoints after validated plan creation and each authorized tool result. Recovery revalidates current policy, cancellation, approval, tool version, and schema before resuming. Bounded agent recovery is deterministic because persisted iterations, evidence hashes, model-call summaries, and budget counters reconstruct the last safe boundary; an abandoned attempt can be reclaimed and will continue from the recorded iteration count instead of spinning in memory.
 
 ## Replay semantics
 

@@ -46,6 +46,15 @@ class RetryPolicy:
     NON_RETRYABLE_ERROR_TYPES = frozenset(
         {
             "permanent",
+            "agent_output_malformed",
+            "agent_output_schema_invalid",
+            "agent_task_invalid",
+            "invalid_decision_limit_reached",
+            "model_budget_exhausted",
+            "no_progress_limit_reached",
+            "replan_not_available",
+            "step_limit_reached",
+            "tool_budget_exhausted",
             "tool_adapter_missing",
             "tool_input_invalid",
             "tool_not_granted",

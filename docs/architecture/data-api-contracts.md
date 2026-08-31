@@ -93,6 +93,7 @@ GET /v1/tools/runs/{run_id}/evidence
 POST /v1/runs/{run_id}:plan
 GET /v1/runs/{run_id}/plans
 GET /v1/runs/{run_id}/model-calls
+GET /v1/runs/{run_id}/agent-iterations
 GET /v1/approvals
 POST /v1/approvals/{approval_request_id}:approve
 POST /v1/approvals/{approval_request_id}:reject
@@ -135,6 +136,14 @@ Implemented human-approval tables currently include:
 | `approval_decisions` | Immutable one-decision ledger | Unique decision per request; records approver, reason, request version, and binding hash |
 
 Approval decisions require `Idempotency-Key` and `If-Match`. Approval is a gate, not an authorization source: the worker must already have a run-scoped tool grant and valid schema/risk policy, and the approver must currently have `approval.decide`. Approved requests move the waiting task back to `ready`, mark the invocation `authorized`, and enqueue the exact task for execution. The worker consumes the approval once immediately before adapter execution. Rejected or expired requests fail closed and do not execute the simulated effect.
+
+Implemented bounded-agent tables currently include:
+
+| Table | Purpose | Important constraints |
+|---|---|---|
+| `agent_iterations` | Durable per-iteration checkpoint ledger for one agent task | Tenant/workspace scoped, monotonic iteration number per task, structured decision type/status, model-call linkage, optional tool/evidence linkage, context hash, counters snapshot |
+
+`agent` workflow steps run inside one durable task, not as graph cycles. The task input declares the agent scenario, objective, explicit bounded budgets, and `allowed_tools`. At run creation, those tool versions are snapshotted into `run_tool_grants`; during execution the model can only propose a structured decision. Forge validates schema, grants, tool arguments, budgets, no-progress limits, and result citations before acting. `GET /v1/runs/{run_id}/agent-iterations` exposes the safe checkpoint ledger to authorized workspace members.
 
 ## Asynchronous envelope
 

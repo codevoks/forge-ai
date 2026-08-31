@@ -195,6 +195,23 @@ export type ApprovalRequest = {
   created_at: string;
 };
 
+export type AgentIteration = {
+  id: string;
+  run_id: string;
+  task_id: string;
+  attempt_id: string;
+  iteration_number: number;
+  model_call_id: string;
+  decision_type: string;
+  decision_status: string;
+  context_hash: string;
+  counters_snapshot: Record<string, unknown>;
+  decision: Record<string, unknown>;
+  validation_errors: string[];
+  result: Record<string, unknown>;
+  created_at: string;
+};
+
 async function parseProblem(response: Response): Promise<Error> {
   const problem = (await response.json()) as ProblemDetails;
   return new Error(`${problem.code}: ${problem.message}`);
@@ -509,6 +526,21 @@ export async function listEvidence(token: string, runId: string): Promise<Eviden
   }
   const payload = (await response.json()) as { evidence_items: EvidenceItem[] };
   return payload.evidence_items;
+}
+
+export async function listAgentIterations(
+  token: string,
+  runId: string
+): Promise<AgentIteration[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/agent-iterations`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { agent_iterations: AgentIteration[] };
+  return payload.agent_iterations;
 }
 
 export async function requeueDeadLetter(token: string, deadLetterId: string): Promise<RunSummary> {

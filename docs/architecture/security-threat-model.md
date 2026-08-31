@@ -44,6 +44,8 @@ Current structured-planning implementation adds a provider-neutral `ModelProvide
 
 Current human-approval implementation adds code-enforced exact-action approval for `simulated_effect` tools. A worker records the invocation intent, hashes canonical arguments, creates a pending approval request, moves the task to `waiting_approval`, and stops before adapter execution. An eligible approver must approve the exact current request version. Self-approval, viewer approval, outsider visibility, stale versions, mutated binding hashes, and expired approvals fail closed. Approval does not grant missing tool/user permissions; it only releases a previously authorized action. Network and secret boundary primitives are present for future egress-capable tools: local SSRF-denial cases reject HTTP, loopback, link-local metadata, and private IP targets; fake secret resolution returns only `secretref://` metadata plus `[redacted]` material.
 
+Current bounded-agent implementation runs model-controlled iteration inside one durable task with explicit budgets and a reusable adversarial suite. The fake model can propose `tool_call`, `complete`, `fail`, or `request_replan`, but application code validates the schema, exact run grants, strict tool arguments, citations, iteration/tool/model-call budgets, and no-progress limits on every iteration. Agent completions need persisted evidence citations. Ungranted tools, unsupported citations, replan requests, repeated invalid decisions, and step limits fail closed. Prompt-injected objectives and untrusted tool outputs are treated as data; they cannot silently change policy, grants, budgets, approvals, or tenant scope.
+
 ## Prompt-injection controls
 
 1. Keep policy/tool capability outside natural-language prompts and enforce it after every model decision.
@@ -96,3 +98,8 @@ No phase passes with known cross-tenant access, model-controlled authorization, 
 | Secret material leakage | Protected and verified for current primitive | Fake resolver returns secret reference and `[redacted]`, never secret material |
 | Planner-selected approval/tool execution | Not applicable yet | Planner proposals are still not executable |
 | Real external side effects | Not applicable yet | Only deterministic local simulated effects exist |
+| Bounded agent tool authority | Protected and verified | Agent `unauthorized_tool` scenario rejects `billing.charge_customer v99` before adapter execution |
+| Agent loop/runaway control | Protected and verified | Step-limit scenario terminates after the configured iteration bound |
+| Agent evidence citations | Protected and verified | Unsupported completion citation is rejected and fails closed |
+| Agent prompt-injection containment | Protected and verified | Prompt-injection scenario uses only granted local `customer_reports.search` and labels evidence `untrusted_tool_output` |
+| Execution-time replanning | Implemented but needing deeper final validation | Replan requests are recorded and fail closed; immutable replan lineage expansion is deferred |

@@ -13,6 +13,8 @@ WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000201"
 WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000202"
 TOOL_WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000301"
 TOOL_WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000302"
+AGENT_WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000401"
+AGENT_WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000402"
 
 
 def _assert_local_database_url(database_url: str) -> None:
@@ -33,6 +35,7 @@ def main() -> None:
         conn.execute("delete from plan_edges")
         conn.execute("delete from plan_nodes")
         conn.execute("delete from plan_versions")
+        conn.execute("delete from agent_iterations")
         conn.execute("delete from model_calls")
         conn.execute("delete from prompt_versions")
         conn.execute("delete from approval_decisions")
@@ -297,6 +300,68 @@ def main() -> None:
                 """,
                 (TENANT_ID, WORKSPACE_ID, TOOL_WORKFLOW_VERSION_ID, from_step, to_step),
             )
+        conn.execute(
+            """
+            insert into workflow_templates (id, tenant_id, workspace_id, name, created_by)
+            values (%s, %s, %s, %s, %s)
+            """,
+            (
+                AGENT_WORKFLOW_TEMPLATE_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                "Bounded Agent Demo",
+                alice["id"],
+            ),
+        )
+        conn.execute(
+            """
+            insert into workflow_versions
+              (id, tenant_id, workspace_id, template_id, version_number, status, name, created_by)
+            values (%s, %s, %s, %s, 1, 'published', %s, %s)
+            """,
+            (
+                AGENT_WORKFLOW_VERSION_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                AGENT_WORKFLOW_TEMPLATE_ID,
+                "Bounded Agent Demo",
+                alice["id"],
+            ),
+        )
+        agent_input = {
+            "scenario": "success",
+            "objective": (
+                "Investigate the local deployment signal, collect evidence, and produce a "
+                "cited conclusion without using live providers."
+            ),
+            "allowed_tools": [
+                {"tool_name": "deployment_history.lookup", "tool_version": 1},
+                {"tool_name": "customer_reports.search", "tool_version": 1},
+            ],
+            "budgets": {
+                "max_iterations": 4,
+                "max_tool_calls": 2,
+                "max_model_calls": 4,
+                "max_context_items": 4,
+                "max_invalid_decisions": 1,
+                "max_no_progress_decisions": 1,
+                "max_output_tokens": 800,
+            },
+        }
+        conn.execute(
+            """
+            insert into workflow_steps
+              (id, tenant_id, workspace_id, workflow_version_id, step_key, name, kind, input)
+            values (gen_random_uuid(), %s, %s, %s, 'bounded_agent',
+                    'Run bounded agent investigation', 'agent', %s)
+            """,
+            (
+                TENANT_ID,
+                WORKSPACE_ID,
+                AGENT_WORKFLOW_VERSION_ID,
+                json.dumps(agent_input),
+            ),
+        )
         TenantRepository(conn).audit(
             "local.seeded",
             TENANT_ID,
@@ -305,6 +370,7 @@ def main() -> None:
                 "workspace_id": WORKSPACE_ID,
                 "workflow_version_id": WORKFLOW_VERSION_ID,
                 "tool_workflow_version_id": TOOL_WORKFLOW_VERSION_ID,
+                "agent_workflow_version_id": AGENT_WORKFLOW_VERSION_ID,
             },
         )
     print("Forge local demo data seeded.")

@@ -1,6 +1,7 @@
 from typing import Any
 
 from forge_api.api.errors import ProblemError
+from forge_api.application.agent_runtime import AgentRuntime
 from forge_api.application.tool_runtime import ToolRuntime
 from forge_api.domain.approvals import ApprovalRequiredError
 from forge_api.domain.reliability import JobEnvelope, RetryPolicy, sanitize_payload
@@ -31,10 +32,13 @@ class OutboxDispatcher:
 
 
 class DeterministicTaskExecutor:
-    def __init__(self, *, tool_runtime: ToolRuntime) -> None:
+    def __init__(self, *, tool_runtime: ToolRuntime, agent_runtime: AgentRuntime) -> None:
         self.tool_runtime = tool_runtime
+        self.agent_runtime = agent_runtime
 
     def execute(self, claim: dict[str, Any]) -> dict[str, Any]:
+        if claim.get("kind") == "agent":
+            return self.agent_runtime.invoke_for_claim(claim)
         if claim.get("kind") == "tool":
             return self.tool_runtime.invoke_for_claim(claim)
         task_input = claim.get("input", {})
@@ -74,7 +78,10 @@ class WorkerConsumer:
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.retry_policy = retry_policy
-        self.executor = DeterministicTaskExecutor(tool_runtime=ToolRuntime(database=database))
+        self.executor = DeterministicTaskExecutor(
+            tool_runtime=ToolRuntime(database=database),
+            agent_runtime=AgentRuntime(database=database),
+        )
 
     def consume_once(self, *, block_ms: int = 1000) -> str:
         envelope = self.queue.consume(consumer_name=self.worker_id, block_ms=block_ms)
