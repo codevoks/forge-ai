@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ActorSummary } from "@forge/shared-types";
 import {
   advanceRun,
+  approveRequest,
   cancelRun,
   createRun,
   getRun,
@@ -14,6 +15,7 @@ import {
   listEvidence,
   listEvents,
   listModelCalls,
+  listApprovals,
   listPlans,
   listTasks,
   listToolInvocations,
@@ -21,7 +23,9 @@ import {
   listWorkflows,
   planRun,
   requeueDeadLetter,
+  rejectRequest,
   runRecoveryScan,
+  type ApprovalRequest,
   type DeadLetter,
   type EvidenceItem,
   type ExecutionEvent,
@@ -36,7 +40,7 @@ import {
   type WorkflowVersion
 } from "../lib/api";
 
-type DemoSubject = "alice" | "bob" | "mallory";
+type DemoSubject = "alice" | "ava" | "bob" | "mallory";
 type PlanningScenario =
   | "valid"
   | "repairable_malformed"
@@ -77,6 +81,7 @@ export default function Home() {
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [plans, setPlans] = useState<PlanVersion[]>([]);
   const [modelCalls, setModelCalls] = useState<ModelCall[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
   const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
@@ -91,6 +96,7 @@ export default function Home() {
     setEvidenceItems([]);
     setPlans([]);
     setModelCalls([]);
+    setApprovals([]);
     setWorkflows([]);
     setSelectedWorkflowId("");
     setTools([]);
@@ -113,6 +119,7 @@ export default function Home() {
       setWorkflows(workflowVersions);
       setSelectedWorkflowId(defaultWorkflow?.id ?? "");
       setTools(toolCatalog);
+      setApprovals(await listApprovals(nextToken));
       await refreshOperations(nextToken, me);
       setStatus("Authenticated through the local OIDC/JWKS path.");
     } catch (caught) {
@@ -154,6 +161,7 @@ export default function Home() {
     ]);
     setPlans(nextPlans);
     setModelCalls(nextModelCalls);
+    setApprovals(await listApprovals(token));
     const hasToolTask = nextTasks.some((task) => task.kind === "tool");
     if (hasToolTask) {
       const [nextInvocations, nextEvidence] = await Promise.all([
@@ -303,6 +311,61 @@ export default function Home() {
     }
   }
 
+  async function tryApproveWithCurrentActor(approval: ApprovalRequest) {
+    if (!token || !run) {
+      return;
+    }
+    setError("");
+    setStatus("Trying approval with the currently selected identity...");
+    try {
+      await approveRequest(token, approval, "Current actor attempts approval.");
+      await refreshRunState(run.id);
+      setStatus("Approval succeeded for the current actor.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Approval attempt was denied safely.");
+    }
+  }
+
+  async function approveAsAva(approval: ApprovalRequest) {
+    if (!run) {
+      return;
+    }
+    setError("");
+    setStatus("Ava Approver is approving the exact action hash...");
+    try {
+      const avaToken = await getDemoToken("ava");
+      await approveRequest(
+        avaToken,
+        approval,
+        "Ava approves the exact local simulated action."
+      );
+      await refreshRunState(run.id);
+      window.setTimeout(() => void refreshRunState(run.id), 1500);
+      setStatus("Approval accepted. The exact action was requeued for the worker.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Ava approval failed safely.");
+    }
+  }
+
+  async function rejectAsAva(approval: ApprovalRequest) {
+    if (!run) {
+      return;
+    }
+    setError("");
+    setStatus("Ava Approver is rejecting the exact action hash...");
+    try {
+      const avaToken = await getDemoToken("ava");
+      await rejectRequest(avaToken, approval, "Ava rejects this exact local action.");
+      await refreshRunState(run.id);
+      setStatus("Approval was rejected and the run failed safely.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Ava rejection failed safely.");
+    }
+  }
+
   const canCreateRun = actor?.workspaces.some(
     (workspace) =>
       workspace.id === workflows.find((workflow) => workflow.id === selectedWorkflowId)?.workspace_id &&
@@ -312,6 +375,8 @@ export default function Home() {
   const selectedWorkflow = workflows.find((workflow) => workflow.id === selectedWorkflowId);
   const latestPlan = plans[0];
   const latestModelCall = modelCalls[0];
+  const runApprovals = run ? approvals.filter((approval) => approval.run_id === run.id) : [];
+  const pendingRunApproval = runApprovals.find((approval) => approval.status === "pending");
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(167,139,250,0.16),transparent_32rem),linear-gradient(180deg,#09090b_0%,#050505_44%)] px-6 py-8">
@@ -330,6 +395,12 @@ export default function Home() {
               onClick={() => void loadIdentity("alice")}
             >
               Alice Admin
+            </button>
+            <button
+              className={`${buttonBase} ${selected === "ava" ? activeButton : ""}`}
+              onClick={() => void loadIdentity("ava")}
+            >
+              Ava Approver
             </button>
             <button
               className={`${buttonBase} ${selected === "bob" ? activeButton : ""}`}
@@ -613,6 +684,64 @@ export default function Home() {
                 </article>
               ))}
             </div>
+
+            {runApprovals.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-zinc-400">Human approval inbox</p>
+                    <h3 className="mt-1 font-semibold text-zinc-50">
+                      Exact-action approval for simulated effects
+                    </h3>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      Approval is bound to the exact action hash, tool version, arguments, run,
+                      task, expiry, and approver eligibility. It does not grant new permissions.
+                    </p>
+                  </div>
+                  {pendingRunApproval ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className={buttonBase}
+                        onClick={() => void tryApproveWithCurrentActor(pendingRunApproval)}
+                      >
+                        Try current actor approval
+                      </button>
+                      <button
+                        className={activeButton + " cursor-pointer rounded-full px-3.5 py-2 text-sm"}
+                        onClick={() => void approveAsAva(pendingRunApproval)}
+                      >
+                        Approve as Ava
+                      </button>
+                      <button
+                        className={buttonBase}
+                        onClick={() => void rejectAsAva(pendingRunApproval)}
+                      >
+                        Reject as Ava
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 grid gap-3">
+                  {runApprovals.map((approval) => (
+                    <article className={cardClass} key={approval.id}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={pillClass}>{approval.status}</span>
+                        <span className={mutedPillClass}>{approval.risk}</span>
+                        <span className={mutedPillClass}>v{approval.request_version}</span>
+                      </div>
+                      <p className="mt-3 text-sm text-zinc-300">{approval.reason}</p>
+                      <p className="mt-2 break-all font-mono text-xs text-violet-200">
+                        action hash {approval.action_hash}
+                      </p>
+                      <pre className="mt-3 max-h-40 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
+                        {JSON.stringify(approval.action_summary, null, 2)}
+                      </pre>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
               <div className="flex flex-wrap items-start justify-between gap-4">

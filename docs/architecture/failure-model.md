@@ -48,7 +48,8 @@ Dependency readiness is derived transactionally after predecessor completion, wi
 | PostgreSQL unavailable | fail closed; no queue-only state progression | outage test |
 | Model malformed/hallucinates tool | schema rejection, bounded correction/failure | fake-model scenarios |
 | Provider rate limit | normalized backoff without tenant starvation | clock-controlled test |
-| Approval expires or changes | exact action cannot execute | race/security test |
+| Approval requested | task moves to `waiting_approval`; worker stops before effect; queue message is acknowledged only after durable suspension | approval suspension test |
+| Approval expires or changes | exact action cannot execute; expired request fails closed; binding mismatch rejects decision | race/security test |
 | Cancellation races with claim | no new unsafe work; active work converges | barrier concurrency test |
 | Process receives shutdown | stop claims, finish/abort bounded unit, release/expire safely | lifecycle test |
 | Trace exporter fails | execution continues with bounded buffer/drop metric | adapter test |
@@ -88,3 +89,7 @@ Later model/tool phases add checkpoints after validated plan creation, each auth
 - **Effect replay:** off by default; requires new authorization/approval/idempotency scope and produces new lineage.
 
 Replay never pretends nondeterministic model output is bit-identical and never silently reuses expired authorization.
+
+## Approval suspension and recovery
+
+Approval suspension is a committed runtime state, not an in-memory worker pause. The worker records the invocation intent and approval request in PostgreSQL, marks the attempt/task as `waiting_approval`, acknowledges the queue message, and exits without invoking the adapter. Approval later revalidates run/task/invocation state, current approver capability, request version, expiry, and binding hash. A successful decision moves the task back to `ready`, marks the invocation `authorized`, and emits a new outbox message. A rejected or expired decision marks the invocation `policy_denied` and fails the run. If Redis is lost while an approval is pending, PostgreSQL still contains the waiting state; the approval decision creates a fresh outbox message.

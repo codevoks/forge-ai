@@ -24,7 +24,7 @@ One transaction must cover each of the following:
 - run creation + objective snapshot + tasks/dependencies + initial readiness;
 - task claim + attempt creation + lease/fencing token;
 - attempt result + task/run transition + checkpoint + budget settlement + event/outbox;
-- approval decision + action-hash validation + invocation/task transition;
+- approval request/decision + action-hash validation + invocation/task transition/outbox;
 - tool intent + budget reservation before effect; result settlement happens later because external calls cannot join the transaction.
 
 Keep transactions short and never hold database locks across queue, model, tool, MCP, or network calls.
@@ -93,6 +93,10 @@ GET /v1/tools/runs/{run_id}/evidence
 POST /v1/runs/{run_id}:plan
 GET /v1/runs/{run_id}/plans
 GET /v1/runs/{run_id}/model-calls
+GET /v1/approvals
+POST /v1/approvals/{approval_request_id}:approve
+POST /v1/approvals/{approval_request_id}:reject
+POST /v1/approvals:expire
 ```
 
 `POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
@@ -120,6 +124,17 @@ Implemented structured-planning tables currently include:
 | `plan_edges` | Validated plan DAG edges | Foreign-keyed to plan nodes; acyclic validation happens before persistence |
 
 `POST /v1/runs/{run_id}:plan` is a planning command, not a provider proxy. It requires `Idempotency-Key`, authorizes the actor against the run workspace, builds a bounded context from the run, allowed tool projection, and evidence summaries, invokes the selected `ModelProvider`, validates structured output, persists the model call and plan version, and appends `plan.validated` or `plan.rejected`. The default provider is the deterministic fake model. Live provider selection fails closed unless external integrations are explicitly enabled.
+
+Implemented human-approval tables currently include:
+
+| Table | Purpose | Important constraints |
+|---|---|---|
+| `policy_versions` | Workspace policy snapshot for approval requirements | Active policy pins high-risk classes such as `simulated_effect`; loosening policy is not model-controlled |
+| `integration_connections` | Local/optional external integration metadata | Stores `secretref://` references only; zero-cost demo uses `local_fake` mode |
+| `approval_requests` | One suspended exact action awaiting a human decision | Bound to tenant, workspace, run, task, invocation, tool version, canonical arguments, action hash, risk, requester, expiry, and version |
+| `approval_decisions` | Immutable one-decision ledger | Unique decision per request; records approver, reason, request version, and binding hash |
+
+Approval decisions require `Idempotency-Key` and `If-Match`. Approval is a gate, not an authorization source: the worker must already have a run-scoped tool grant and valid schema/risk policy, and the approver must currently have `approval.decide`. Approved requests move the waiting task back to `ready`, mark the invocation `authorized`, and enqueue the exact task for execution. The worker consumes the approval once immediately before adapter execution. Rejected or expired requests fail closed and do not execute the simulated effect.
 
 ## Asynchronous envelope
 

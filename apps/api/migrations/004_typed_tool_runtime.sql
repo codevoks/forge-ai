@@ -78,6 +78,8 @@ create table if not exists tool_invocations (
   status text not null check (
     status in (
       'intent_recorded',
+      'approval_required',
+      'authorized',
       'executing',
       'succeeded',
       'failed',

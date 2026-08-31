@@ -172,12 +172,37 @@ export type ModelCall = {
   created_at: string;
 };
 
+export type ApprovalRequest = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  run_id: string;
+  task_id: string;
+  tool_invocation_id: string;
+  requester_id: string;
+  action_hash: string;
+  binding_hash: string;
+  risk: string;
+  reason: string;
+  action_summary: Record<string, unknown>;
+  status: string;
+  request_version: number;
+  expires_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_reason: string | null;
+  consumed_at: string | null;
+  created_at: string;
+};
+
 async function parseProblem(response: Response): Promise<Error> {
   const problem = (await response.json()) as ProblemDetails;
   return new Error(`${problem.code}: ${problem.message}`);
 }
 
-export async function getDemoToken(subject: "alice" | "bob" | "mallory"): Promise<string> {
+export async function getDemoToken(
+  subject: "alice" | "ava" | "bob" | "mallory"
+): Promise<string> {
   const response = await fetch(`${API_BASE_URL}/dev/oidc/token/${subject}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Token request failed with ${response.status}`);
@@ -350,6 +375,64 @@ export async function listModelCalls(token: string, runId: string): Promise<Mode
   }
   const payload = (await response.json()) as { model_calls: ModelCall[] };
   return payload.model_calls;
+}
+
+export async function listApprovals(token: string): Promise<ApprovalRequest[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/approvals`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { approval_requests: ApprovalRequest[] };
+  return payload.approval_requests;
+}
+
+export async function approveRequest(
+  token: string,
+  approval: ApprovalRequest,
+  reason: string
+): Promise<ApprovalRequest> {
+  const response = await fetch(`${API_BASE_URL}/v1/approvals/${approval.id}:approve`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `demo-approval-${approval.id}-${Date.now()}`,
+      "If-Match": String(approval.request_version)
+    },
+    body: JSON.stringify({ reason })
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { approval_request: ApprovalRequest };
+  return payload.approval_request;
+}
+
+export async function rejectRequest(
+  token: string,
+  approval: ApprovalRequest,
+  reason: string
+): Promise<ApprovalRequest> {
+  const response = await fetch(`${API_BASE_URL}/v1/approvals/${approval.id}:reject`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `demo-reject-${approval.id}-${Date.now()}`,
+      "If-Match": String(approval.request_version)
+    },
+    body: JSON.stringify({ reason })
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { approval_request: ApprovalRequest };
+  return payload.approval_request;
 }
 
 export async function getWorkerState(token: string): Promise<WorkerState> {

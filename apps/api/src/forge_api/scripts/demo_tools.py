@@ -5,9 +5,11 @@ from urllib.parse import urlparse
 from redis import Redis
 
 from forge_api.api.errors import ProblemError
+from forge_api.application.approval_service import ApprovalService
 from forge_api.application.reliability_service import OutboxDispatcher, WorkerConsumer
 from forge_api.application.workflow_service import WorkflowService
 from forge_api.config import Settings
+from forge_api.domain.approvals import ApprovalDecisionValue
 from forge_api.domain.identity import ActorContext, Role
 from forge_api.domain.reliability import RetryPolicy
 from forge_api.infrastructure.database import Database
@@ -42,6 +44,20 @@ def _alice_id(database: Database, settings: Settings) -> str:
     return str(row["id"])
 
 
+def _user_id(database: Database, settings: Settings, subject: str) -> str:
+    with database.transaction(actor_id="00000000-0000-0000-0000-000000000000") as conn:
+        row = conn.execute(
+            """
+            select id from users
+            where external_issuer = %s and external_subject = %s
+            """,
+            (settings.oidc_issuer, f"oidc|{subject}"),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError(f"Seeded {subject} user was not found.")
+    return str(row["id"])
+
+
 def _alice_actor(database: Database, settings: Settings) -> ActorContext:
     actor_id = _alice_id(database, settings)
     return ActorContext(
@@ -51,6 +67,18 @@ def _alice_actor(database: Database, settings: Settings) -> ActorContext:
         display_name="Alice Admin",
         tenant_ids=frozenset({TENANT_ID}),
         workspace_roles={WORKSPACE_ID: Role.TENANT_ADMIN},
+    )
+
+
+def _ava_actor(database: Database, settings: Settings) -> ActorContext:
+    actor_id = _user_id(database, settings, "ava")
+    return ActorContext(
+        user_id=actor_id,
+        external_subject="oidc|ava",
+        email="ava@forge.local",
+        display_name="Ava Approver",
+        tenant_ids=frozenset({TENANT_ID}),
+        workspace_roles={WORKSPACE_ID: Role.APPROVER},
     )
 
 
@@ -100,6 +128,7 @@ def _drive_worker(
     database: Database,
     settings: Settings,
     actor_id: str,
+    approver: ActorContext | None = None,
     run_id: str,
     max_ticks: int = 80,
 ) -> str:
@@ -114,11 +143,38 @@ def _drive_worker(
     )
     for _ in range(max_ticks):
         dispatcher.dispatch_once()
-        consumer.consume_once(block_ms=50)
+        outcome = consumer.consume_once(block_ms=50)
+        if outcome == "waiting_approval" and approver is not None:
+            approval = _pending_approval(database, approver.user_id, run_id)
+            ApprovalService(database).decide(
+                approver,
+                str(approval["id"]),
+                decision=ApprovalDecisionValue.APPROVED,
+                reason="Ava approves exact local simulated effect.",
+                expected_version=int(approval["request_version"]),
+                idempotency_key=f"demo-approve-{approval['id']}",
+            )
         status = _run_status(database, actor_id, run_id)
         if status in {"succeeded", "failed", "cancelled"}:
             return status
     return _run_status(database, actor_id, run_id)
+
+
+def _pending_approval(database: Database, actor_id: str, run_id: str) -> dict[str, Any]:
+    with database.transaction(actor_id=actor_id) as conn:
+        approvals = conn.execute(
+            """
+            select *
+            from approval_requests
+            where run_id = %s and status = 'pending'
+            order by created_at desc
+            limit 1
+            """,
+            (run_id,),
+        ).fetchone()
+    if approvals is None:
+        raise RuntimeError("Expected pending approval was not found.")
+    return dict(approvals)
 
 
 def _list_invocations(database: Database, actor_id: str, run_id: str) -> list[dict[str, Any]]:
@@ -137,7 +193,12 @@ def _list_evidence(database: Database, actor_id: str, run_id: str) -> list[dict[
         )
 
 
-def demo_success(database: Database, settings: Settings, actor_id: str) -> None:
+def demo_success(
+    database: Database,
+    settings: Settings,
+    actor_id: str,
+    approver: ActorContext,
+) -> None:
     run = _create_run(
         database=database,
         actor_id=actor_id,
@@ -148,6 +209,7 @@ def demo_success(database: Database, settings: Settings, actor_id: str) -> None:
         database=database,
         settings=settings,
         actor_id=actor_id,
+        approver=approver,
         run_id=str(run["id"]),
     )
     invocations = _list_invocations(database, actor_id, str(run["id"]))
@@ -244,6 +306,7 @@ def demo_outcome_unknown(database: Database, settings: Settings, actor_id: str) 
         database=database,
         settings=settings,
         actor_id=actor_id,
+        approver=_ava_actor(database, settings),
         run_id=str(run["id"]),
     )
     invocations = _list_invocations(database, actor_id, str(run["id"]))
@@ -267,8 +330,9 @@ def main() -> None:
     _clear_queue(settings)
     database = Database(settings.database_url)
     actor = _alice_actor(database, settings)
+    approver = _ava_actor(database, settings)
     actor_id = actor.user_id
-    demo_success(database, settings, actor_id)
+    demo_success(database, settings, actor_id, approver)
     demo_invalid_schema(database, actor)
     demo_outcome_unknown(database, settings, actor_id)
 

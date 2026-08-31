@@ -19,6 +19,7 @@ class Capability(StrEnum):
     RUN_READ = "run.read"
     RUN_CREATE = "run.create"
     RUN_RECOVER = "run.recover"
+    APPROVAL_DECIDE = "approval.decide"
 
 
 ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
@@ -31,6 +32,7 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
         Capability.RUN_READ,
         Capability.RUN_CREATE,
         Capability.RUN_RECOVER,
+        Capability.APPROVAL_DECIDE,
     },
     Role.WORKSPACE_ADMIN: {
         Capability.WORKSPACE_ADMIN,
@@ -40,6 +42,7 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
         Capability.RUN_READ,
         Capability.RUN_CREATE,
         Capability.RUN_RECOVER,
+        Capability.APPROVAL_DECIDE,
     },
     Role.OPERATOR: {
         Capability.WORKSPACE_READ,
@@ -50,6 +53,7 @@ ROLE_CAPABILITIES: dict[Role, set[Capability]] = {
     Role.APPROVER: {
         Capability.WORKSPACE_READ,
         Capability.RUN_READ,
+        Capability.APPROVAL_DECIDE,
     },
     Role.VIEWER: {
         Capability.WORKSPACE_READ,

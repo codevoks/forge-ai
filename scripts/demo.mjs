@@ -51,6 +51,7 @@ async function main() {
   console.log("API:    http://127.0.0.1:8000/health/ready");
   console.log("Demo:   choose Alice Admin, create a run, then refresh to watch worker execution.");
   console.log("Plan:   create a run, then generate a fake structured plan or adversarial rejection.");
+  console.log("Approve: high-risk simulated effects stop until Ava approves the exact action.");
   console.log("Worker: local Redis queue, leases, checkpoints, recovery, and dead letters are active.");
   console.log("");
 

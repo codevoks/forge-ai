@@ -53,6 +53,7 @@ def run_worker_until_terminal(
     issuer: DevIssuer,
     run_id: str,
     max_ticks: int = 80,
+    auto_approve: bool = True,
 ) -> Mapping[str, Any]:
     dispatcher = OutboxDispatcher(database=database, queue=queue, worker_id=settings.worker_id)
     consumer = WorkerConsumer(
@@ -65,12 +66,29 @@ def run_worker_until_terminal(
     run: Mapping[str, Any] = {}
     for _ in range(max_ticks):
         dispatcher.dispatch_once()
-        consumer.consume_once(block_ms=0)
+        outcome = consumer.consume_once(block_ms=0)
+        if auto_approve and outcome == "waiting_approval":
+            approve_pending_requests(client, issuer)
         client.post("/v1/operations/recovery:scan", headers=headers(issuer))
         run = client.get(f"/v1/runs/{run_id}", headers=headers(issuer)).json()["run"]
         if run["status"] in {"succeeded", "failed", "cancelled"}:
             return run
     raise AssertionError("run did not become terminal")
+
+
+def approve_pending_requests(client: TestClient, issuer: DevIssuer) -> None:
+    response = client.get("/v1/approvals", headers=headers(issuer, "ava"))
+    assert response.status_code == 200
+    for approval in response.json()["approval_requests"]:
+        if approval["status"] != "pending":
+            continue
+        approved = client.post(
+            f"/v1/approvals/{approval['id']}:approve",
+            headers=headers(issuer, "ava", f"approve-{approval['id']}-{uuid4()}")
+            | {"If-Match": str(approval["request_version"])},
+            json={"reason": "Ava approves the exact local simulated action."},
+        )
+        assert approved.status_code == 200
 
 
 def publish_tool_workflow(

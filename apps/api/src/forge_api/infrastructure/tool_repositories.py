@@ -286,7 +286,17 @@ class ToolInvocationRepository:
             """
             update tool_invocations
             set status = 'executing', started_at = coalesce(started_at, now()), updated_at = now()
-            where id = %s and status in ('intent_recorded', 'failed')
+            where id = %s and status in ('intent_recorded', 'authorized', 'failed')
+            """,
+            (invocation_id,),
+        )
+
+    def mark_authorized(self, *, invocation_id: str) -> None:
+        self.conn.execute(
+            """
+            update tool_invocations
+            set status = 'authorized', updated_at = now()
+            where id = %s and status = 'approval_required'
             """,
             (invocation_id,),
         )

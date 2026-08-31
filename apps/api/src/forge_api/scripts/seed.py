@@ -35,9 +35,13 @@ def main() -> None:
         conn.execute("delete from plan_versions")
         conn.execute("delete from model_calls")
         conn.execute("delete from prompt_versions")
+        conn.execute("delete from approval_decisions")
+        conn.execute("delete from approval_requests")
         conn.execute("delete from evidence_items")
         conn.execute("delete from tool_invocations")
         conn.execute("delete from run_tool_grants")
+        conn.execute("delete from integration_connections")
+        conn.execute("delete from policy_versions")
         conn.execute("delete from dead_letters")
         conn.execute("delete from checkpoints")
         conn.execute("delete from inbox_messages")
@@ -67,6 +71,14 @@ def main() -> None:
                 "sub": "oidc|alice",
                 "email": "alice@forge.local",
                 "name": "Alice Admin",
+            }
+        )
+        ava = IdentityRepository(conn).upsert_user_from_claims(
+            {
+                "iss": settings.oidc_issuer,
+                "sub": "oidc|ava",
+                "email": "ava@forge.local",
+                "name": "Ava Approver",
             }
         )
         bob = IdentityRepository(conn).upsert_user_from_claims(
@@ -104,6 +116,38 @@ def main() -> None:
             on conflict (tenant_id, workspace_id, user_id) do update set role = excluded.role
             """,
             (TENANT_ID, WORKSPACE_ID, bob["id"]),
+        )
+        conn.execute(
+            """
+            insert into memberships (tenant_id, workspace_id, user_id, role)
+            values (%s, %s, %s, 'approver')
+            on conflict (tenant_id, workspace_id, user_id) do update set role = excluded.role
+            """,
+            (TENANT_ID, WORKSPACE_ID, ava["id"]),
+        )
+        conn.execute(
+            """
+            insert into policy_versions
+              (id, tenant_id, workspace_id, version, status, created_by)
+            values (gen_random_uuid(), %s, %s, 1, 'active', %s)
+            on conflict (tenant_id, workspace_id, version) do update
+              set status = 'active'
+            """,
+            (TENANT_ID, WORKSPACE_ID, alice["id"]),
+        )
+        conn.execute(
+            """
+            insert into integration_connections
+              (id, tenant_id, workspace_id, name, provider, mode,
+               secret_reference, status, created_by)
+            values (gen_random_uuid(), %s, %s, 'local-ticket-demo', 'local-fake-ticket',
+                    'local_fake', 'secretref://local/ticket-demo', 'active', %s)
+            on conflict (tenant_id, workspace_id, name) do update
+              set mode = excluded.mode,
+                  secret_reference = excluded.secret_reference,
+                  status = excluded.status
+            """,
+            (TENANT_ID, WORKSPACE_ID, alice["id"]),
         )
         conn.execute(
             """

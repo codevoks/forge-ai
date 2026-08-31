@@ -57,7 +57,26 @@ def create_and_complete_tool_run(
     )
     for _ in range(80):
         dispatcher.dispatch_once()
-        consumer.consume_once(block_ms=0)
+        outcome = consumer.consume_once(block_ms=0)
+        if outcome == "waiting_approval":
+            approvals = client.get("/v1/approvals", headers=auth_headers(issuer, "ava")).json()[
+                "approval_requests"
+            ]
+            pending = next(
+                approval
+                for approval in approvals
+                if approval["run_id"] == run["id"] and approval["status"] == "pending"
+            )
+            approved = client.post(
+                f"/v1/approvals/{pending['id']}:approve",
+                headers=auth_headers(issuer, "ava")
+                | {
+                    "Idempotency-Key": f"security-approve-{uuid4()}",
+                    "If-Match": str(pending["request_version"]),
+                },
+                json={"reason": "Ava approves exact local simulated effect."},
+            )
+            assert approved.status_code == 200
         current = client.get(f"/v1/runs/{run['id']}", headers=auth_headers(issuer, "alice")).json()[
             "run"
         ]

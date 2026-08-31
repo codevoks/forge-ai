@@ -19,6 +19,8 @@ class ToolRisk(StrEnum):
 
 class InvocationStatus(StrEnum):
     INTENT_RECORDED = "intent_recorded"
+    APPROVAL_REQUIRED = "approval_required"
+    AUTHORIZED = "authorized"
     EXECUTING = "executing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"

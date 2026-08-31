@@ -2,6 +2,7 @@ from typing import Any
 
 from forge_api.api.errors import ProblemError
 from forge_api.application.tool_runtime import ToolRuntime
+from forge_api.domain.approvals import ApprovalRequiredError
 from forge_api.domain.reliability import JobEnvelope, RetryPolicy, sanitize_payload
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.workflow_repositories import OutboxRepository, WorkerRepository
@@ -119,6 +120,15 @@ class WorkerConsumer:
             )
             self.queue.ack(message_id=envelope.message_id)
             return "dead_lettered"
+        except ApprovalRequiredError:
+            with self.database.transaction(worker_id=self.worker_id) as conn:
+                WorkerRepository(conn, lease_seconds=self.lease_seconds).finish_inbox(
+                    envelope=envelope,
+                    handler_name=handler_name,
+                    status="succeeded",
+                )
+            self.queue.ack(message_id=envelope.message_id)
+            return "waiting_approval"
         except ProblemError as exc:
             self._fail_claim(
                 envelope=envelope,

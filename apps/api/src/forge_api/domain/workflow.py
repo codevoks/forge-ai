@@ -23,6 +23,7 @@ class TaskStatus(StrEnum):
     PENDING = "pending"
     READY = "ready"
     RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
     RETRY_WAIT = "retry_wait"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -46,10 +47,12 @@ TASK_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.READY: {TaskStatus.RUNNING, TaskStatus.CANCELLED},
     TaskStatus.RUNNING: {
         TaskStatus.SUCCEEDED,
+        TaskStatus.WAITING_APPROVAL,
         TaskStatus.RETRY_WAIT,
         TaskStatus.FAILED,
         TaskStatus.CANCELLED,
     },
+    TaskStatus.WAITING_APPROVAL: {TaskStatus.READY, TaskStatus.FAILED, TaskStatus.CANCELLED},
     TaskStatus.RETRY_WAIT: {TaskStatus.READY, TaskStatus.FAILED, TaskStatus.CANCELLED},
     TaskStatus.SUCCEEDED: set(),
     TaskStatus.FAILED: set(),

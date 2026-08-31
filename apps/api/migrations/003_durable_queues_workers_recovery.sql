@@ -8,7 +8,18 @@ alter table tasks
 
 alter table tasks
   add constraint tasks_status_check
-  check (status in ('pending', 'ready', 'running', 'retry_wait', 'succeeded', 'failed', 'cancelled'));
+  check (
+    status in (
+      'pending',
+      'ready',
+      'running',
+      'waiting_approval',
+      'retry_wait',
+      'succeeded',
+      'failed',
+      'cancelled'
+    )
+  );
 
 alter table tasks
   add column if not exists next_retry_at timestamptz,
@@ -20,7 +31,7 @@ alter table task_attempts
 
 alter table task_attempts
   add constraint task_attempts_status_check
-  check (status in ('running', 'succeeded', 'failed', 'abandoned'));
+  check (status in ('running', 'succeeded', 'failed', 'abandoned', 'waiting_approval'));
 
 alter table task_attempts
   add column if not exists worker_id text,

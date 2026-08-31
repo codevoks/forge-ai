@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from forge_api.api.error_handlers import install_error_handlers
 from forge_api.api.rate_limit import LocalRateLimitMiddleware
 from forge_api.api.routes import (
+    approvals,
     dev_oidc,
     health,
     identity,
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(identity.router)
     app.include_router(operations.router)
     app.include_router(tenants.router)
+    app.include_router(approvals.router)
     app.include_router(tools.router)
     app.include_router(workspaces.router)
     app.include_router(workflows.router)

@@ -1,12 +1,14 @@
 from typing import Any
 
 from forge_api.api.errors import ProblemError
+from forge_api.domain.approvals import ApprovalPolicy, ApprovalRequiredError
 from forge_api.domain.tools import (
     InvocationStatus,
     ToolRisk,
     registered_tools,
     tool_by_name_version,
 )
+from forge_api.infrastructure.approval_repositories import ApprovalRepository
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.tool_repositories import (
     RunToolGrantRepository,
@@ -25,6 +27,35 @@ class ToolPolicy:
                 "tool_risk_not_allowed",
                 "This tool risk is not executable in the current runtime.",
             )
+
+
+class ToolApprovalPolicy:
+    def ensure_approved_or_suspend(
+        self,
+        *,
+        approval_repo: ApprovalRepository,
+        claim: dict[str, Any],
+        invocation: dict[str, Any],
+        risk: ToolRisk,
+        canonical_arguments: dict[str, object],
+    ) -> tuple[bool, str | None]:
+        requirement = ApprovalPolicy().requirement(risk=risk.value)
+        if not requirement.required:
+            return True, None
+        approved = approval_repo.approved_request_for_invocation(
+            invocation=invocation,
+            canonical_arguments=canonical_arguments,
+        )
+        if approved is not None:
+            approval_repo.consume_approved_request(approval_request_id=str(approved["id"]))
+            return True, None
+        requested = approval_repo.require_for_invocation(
+            claim=claim,
+            invocation=invocation,
+            canonical_arguments=canonical_arguments,
+            reason=requirement.reason,
+        )
+        return False, str(requested["id"])
 
 
 class DeterministicToolAdapter:
@@ -86,6 +117,7 @@ class ToolRuntime:
     def __init__(self, *, database: Database) -> None:
         self.database = database
         self.policy = ToolPolicy()
+        self.approvals = ToolApprovalPolicy()
         self.adapter = DeterministicToolAdapter()
 
     def invoke_for_claim(self, claim: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +136,7 @@ class ToolRuntime:
         validated_input = tool_definition.validate_input(arguments)
         canonical_arguments = validated_input.model_dump()
 
+        approval_required_id: str | None = None
         with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
             registry_tool = ToolRegistryRepository(conn).resolve(
                 name=tool_name,
@@ -133,7 +166,24 @@ class ToolRuntime:
                     "output": invocation["output"],
                     "evidence": {"reused": True},
                 }
-            invocation_repo.mark_executing(invocation_id=str(invocation["id"]))
+            approved, approval_required_id = self.approvals.ensure_approved_or_suspend(
+                approval_repo=ApprovalRepository(conn),
+                claim=claim,
+                invocation=invocation,
+                risk=tool_definition.risk,
+                canonical_arguments=canonical_arguments,
+            )
+            if not approved:
+                return_after_commit = approval_required_id
+            else:
+                return_after_commit = None
+            if invocation["status"] == InvocationStatus.APPROVAL_REQUIRED.value:
+                invocation_repo.mark_authorized(invocation_id=str(invocation["id"]))
+            if return_after_commit is None:
+                invocation_repo.mark_executing(invocation_id=str(invocation["id"]))
+
+        if approval_required_id is not None:
+            raise ApprovalRequiredError(approval_required_id)
 
         try:
             output = self.adapter.invoke(

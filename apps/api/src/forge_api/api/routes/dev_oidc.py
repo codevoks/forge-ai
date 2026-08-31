@@ -14,6 +14,7 @@ def token(subject: str, settings: Annotated[Settings, Depends(get_settings)]) ->
     settings.assert_zero_cost_safe()
     subjects = {
         "alice": ("oidc|alice", "alice@forge.local", "Alice Admin"),
+        "ava": ("oidc|ava", "ava@forge.local", "Ava Approver"),
         "bob": ("oidc|bob", "bob@forge.local", "Bob Viewer"),
         "mallory": ("oidc|mallory", "mallory@forge.local", "Mallory Outsider"),
     }

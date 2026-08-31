@@ -38,9 +38,11 @@ Every crossing authenticates its caller where possible, validates typed/size-bou
 - Separation of duties is policy-configurable. Approval never grants missing tool/user permissions.
 - Tool output is data with provenance. It cannot change system instructions, permissions, budgets, or allowed tools.
 
-Current typed-tool runtime implementation enforces the early subset of this model with code-registered tools, strict Pydantic input/output schemas, run-scoped grants, risk labels, local deterministic adapters, invocation action hashes, idempotency keys, `outcome_unknown` recording for ambiguous simulated effects, RLS-protected invocation/evidence inspection, and explicit trust labels such as `untrusted_tool_output`. High-risk irreversible side effects, human approvals, secret resolution, network egress tools, planner-selected calls, MCP resources, and live providers remain unavailable until their owning phases.
+Current typed-tool runtime implementation enforces the early subset of this model with code-registered tools, strict Pydantic input/output schemas, run-scoped grants, risk labels, local deterministic adapters, invocation action hashes, idempotency keys, `outcome_unknown` recording for ambiguous simulated effects, RLS-protected invocation/evidence inspection, and explicit trust labels such as `untrusted_tool_output`. High-risk irreversible side effects, planner-selected calls, MCP resources, and live providers remain unavailable until their owning phases.
 
 Current structured-planning implementation adds a provider-neutral `ModelProvider` port, deterministic fake planner, optional live-provider adapter that fails closed while external integrations are disabled, prompt/schema version registry, bounded context builder, strict structured-output parser, semantic DAG/tool validation, immutable `plan_versions`, RLS-protected `model_calls`, and execution events for plan acceptance/rejection. The planner may propose only; it cannot execute tools, increase permissions, change budgets, or mutate tasks. Hallucinated tool names/versions, cyclic DAGs, malformed output, model refusal, cross-tenant reads, viewer planning attempts, and prompt-injection attempts are covered by adversarial tests.
+
+Current human-approval implementation adds code-enforced exact-action approval for `simulated_effect` tools. A worker records the invocation intent, hashes canonical arguments, creates a pending approval request, moves the task to `waiting_approval`, and stops before adapter execution. An eligible approver must approve the exact current request version. Self-approval, viewer approval, outsider visibility, stale versions, mutated binding hashes, and expired approvals fail closed. Approval does not grant missing tool/user permissions; it only releases a previously authorized action. Network and secret boundary primitives are present for future egress-capable tools: local SSRF-denial cases reject HTTP, loopback, link-local metadata, and private IP targets; fake secret resolution returns only `secretref://` metadata plus `[redacted]` material.
 
 ## Prompt-injection controls
 
@@ -79,3 +81,18 @@ Every stored payload category declares owner, purpose, read/write principals, re
 ## Security release gates
 
 No phase passes with known cross-tenant access, model-controlled authorization, unbound approval, logged secret, unbounded loop/cost, replayed effect by default, or an external-fetch tool without network destination controls. Threat model and abuse cases are updated whenever a new trust boundary appears.
+
+## Current phase-level security classification
+
+| Area | Classification | Evidence |
+|---|---|---|
+| Approval exact-action binding | Protected and verified | Binding hash recomputation rejects modified invocation arguments |
+| Separation of duties | Protected and verified | Requester self-approval returns `approval_self_forbidden` |
+| Approver authorization | Protected and verified | Viewer approval returns `approval_decision_forbidden`; outsider list returns no rows |
+| Replay/stale approval versions | Protected and verified | Duplicate idempotency replay is stable; second decision with stale version is rejected |
+| Expiry fail-closed behavior | Protected and verified | Expired approval returns `approval_expired` and fails the run/task without executing the effect |
+| Approval table tenant isolation | Protected and verified | RLS hides approval rows without transaction scope |
+| SSRF-ready URL boundary | Protected and verified for current primitive | Reusable adversarial URL corpus denies HTTP, loopback, link-local metadata, and private IPs |
+| Secret material leakage | Protected and verified for current primitive | Fake resolver returns secret reference and `[redacted]`, never secret material |
+| Planner-selected approval/tool execution | Not applicable yet | Planner proposals are still not executable |
+| Real external side effects | Not applicable yet | Only deterministic local simulated effects exist |

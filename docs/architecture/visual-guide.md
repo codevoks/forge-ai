@@ -151,6 +151,39 @@ sequenceDiagram
     end
 ```
 
+## Exact-action approval sequence
+
+The worker cannot execute a high-risk simulated effect just because a model, workflow step, or queue message asks for it. The approval request is committed first, then the worker exits. Approval later revalidates the exact action and requeues the same task.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Worker
+    participant PG as PostgreSQL
+    participant A as Approver API
+    participant Q as Redis Streams
+    participant T as Tool adapter
+
+    W->>PG: Claim tool task + persist invocation intent
+    W->>PG: Compute action hash + binding hash
+    W->>PG: Insert approval_request pending
+    W->>PG: Mark task waiting_approval
+    W-->>Q: Ack original queue message
+    Note over W,T: Adapter is not invoked while approval is pending
+    A->>PG: Approve/reject with Idempotency-Key + If-Match
+    PG->>PG: Revalidate approver, version, expiry, state, binding hash
+    alt approved exact action
+        PG->>PG: Mark invocation authorized + task ready
+        PG->>PG: Add outbox task.execute.requested
+        Q-->>W: Deliver resumed task
+        W->>PG: Consume approval once
+        W->>T: Execute bounded local adapter
+        W->>PG: Persist result, event, checkpoint, evidence
+    else rejected, expired, stale, or mutated
+        PG->>PG: Mark invocation policy_denied and fail task/run
+    end
+```
+
 ## Workflow shape and bounded autonomy
 
 Forge keeps the user/planner work graph acyclic. Model-controlled iteration lives inside one task and is bounded independently, so dependency scheduling and termination remain explainable.
