@@ -24,6 +24,7 @@ class AgentScenario(StrEnum):
     PROMPT_INJECTION = "prompt_injection"
     UNSUPPORTED_CLAIM = "unsupported_claim"
     REPLAN = "replan"
+    APPROVAL_INTERRUPT = "approval_interrupt"
 
 
 class AgentDecisionType(StrEnum):

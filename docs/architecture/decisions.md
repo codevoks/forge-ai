@@ -43,6 +43,8 @@ The provider-neutral structured interface and normalized usage/errors are fixed.
 
 Phase 8 must compare custom and LangGraph implementations using identical scenarios, persistence/policy/tools, failure tests, complexity, trace quality, and recovery semantics. LangGraph may own agent-loop orchestration, but Forge remains authoritative for tenancy, approvals, effects, budgets, and audit. Adoption breadth follows evidence.
 
+Phase 8 implementation evidence: LangGraph is available as an explicit `engine_kind=langgraph` strategy for bounded agent tasks, backed by the same deterministic fake model, tool runtime, approval service, budget checks, task transitions, and PostgreSQL authority as the custom runtime. Sanitized LangGraph checkpoints are mirrored for inspection under `workflow_engine_checkpoints`, but they are not an authorization or scheduling source. Focused parity and adversarial tests cover successful custom/LangGraph completion parity, unauthorized tool denial, step-limit safe failure, prompt-injection containment, approval interrupt/resume, and checkpoint tenant isolation. The default engine remains `custom`; switching the default is intentionally deferred until Phase 9 evaluation data compares complexity, trace quality, recovery ergonomics, and developer velocity on frozen scenarios.
+
 ### Q-005 Temporal adoption
 
 Phase 13 runs a free local/self-hosted spike and architecture review. Temporal Cloud is not required. Adopt only if durable timers, long-lived workflow history, signals, cancellation, retry operations, or developer/operational burden materially improve after including migration, infrastructure, determinism constraints, data duplication, and team learning cost. A no-adoption decision is valid.

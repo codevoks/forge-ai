@@ -69,6 +69,20 @@ Dependencies point inward: infrastructure and delivery depend on application/dom
 
 The default path remains zero-cost: `forge-fake-agent-v1` is deterministic, live providers are disabled, and all tool calls use local registered adapters.
 
+## LangGraph comparison execution path
+
+Phase 8 adds LangGraph as a selectable `WorkflowEngine` strategy for the same bounded agent task. The custom engine remains the default. A run may select `engine_kind=langgraph`; the worker then executes the agent task through a local open-source LangGraph `StateGraph` composed of explicit nodes:
+
+```text
+load_state -> decide -> validate_and_record -> tool_node -> load_state
+                                      |-> complete_node
+                                      |-> fail_node
+```
+
+LangGraph owns framework-level node routing for the comparison only. Forge remains authoritative for tenant scope, task claims, tool grants, strict schemas, approvals, evidence, budgets, checkpoints, task/run transitions, and audit events. The LangGraph state carries only minimal resumable references and bounded state summaries. It never becomes a second tenant/security database and cannot directly invoke provider tools.
+
+The `ForgeLangGraphCheckpointer` mirrors sanitized framework checkpoint metadata into PostgreSQL under `workflow_engine_checkpoints`, mapped to Forge run/task/attempt identifiers. These records are inspectable comparison evidence; they are not an authority source for authorization, scheduling, approval, or external effects. Approval interrupts are represented at the LangGraph tool boundary, but the actual suspension/resume path is still the Phase 6 exact-action approval mechanism.
+
 ## Control plane versus execution plane
 
 - **Control plane:** identity, tenant/workspace administration, workflow/tool registration, policies, credentials references, budgets, approvals.
@@ -88,7 +102,7 @@ They share the initial database and services but have separate modules, permissi
 - `QueuePort`: in-process deterministic fake then Redis Streams; Temporal adapter only after evidence.
 - `ModelProvider`: deterministic fake, OpenAI/Bedrock adapters, normalized usage/errors.
 - `Tool`: local deterministic implementations and MCP proxy share one validated invocation contract.
-- `WorkflowEngine`: custom explicit runtime and LangGraph implementation share domain repositories, policy, tools, and events.
+- `WorkflowEngine`: custom explicit runtime and LangGraph implementation share domain repositories, policy, tools, approvals, checkpoints, and events.
 - `PolicyEngine`: code-owned interfaces; start with explicit Python policies, benchmark a policy DSL/OPA only if complexity demands it.
 
 ## Why not microservices now

@@ -35,6 +35,7 @@ def main() -> None:
         conn.execute("delete from plan_edges")
         conn.execute("delete from plan_nodes")
         conn.execute("delete from plan_versions")
+        conn.execute("delete from workflow_engine_checkpoints")
         conn.execute("delete from agent_iterations")
         conn.execute("delete from model_calls")
         conn.execute("delete from prompt_versions")

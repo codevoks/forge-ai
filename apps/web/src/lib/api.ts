@@ -32,6 +32,9 @@ export type RunSummary = {
   workflow_name: string;
   objective: string;
   status: string;
+  engine_kind: "custom" | "langgraph";
+  engine_version: string;
+  engine_metadata: Record<string, unknown>;
   version: number;
 };
 
@@ -212,6 +215,21 @@ export type AgentIteration = {
   created_at: string;
 };
 
+export type EngineCheckpoint = {
+  id: string;
+  run_id: string;
+  task_id: string | null;
+  attempt_id: string | null;
+  engine_kind: string;
+  engine_version: string;
+  namespace: string;
+  checkpoint_id: string;
+  node_name: string;
+  state_summary: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
 async function parseProblem(response: Response): Promise<Error> {
   const problem = (await response.json()) as ProblemDetails;
   return new Error(`${problem.code}: ${problem.message}`);
@@ -253,7 +271,12 @@ export async function listWorkflows(token: string): Promise<WorkflowVersion[]> {
 
 export async function createRun(
   token: string,
-  input: { workspace_id: string; workflow_version_id: string; objective: string }
+  input: {
+    workspace_id: string;
+    workflow_version_id: string;
+    objective: string;
+    engine_kind?: "custom" | "langgraph";
+  }
 ): Promise<RunSummary> {
   const response = await fetch(`${API_BASE_URL}/v1/runs`, {
     method: "POST",
@@ -541,6 +564,21 @@ export async function listAgentIterations(
   }
   const payload = (await response.json()) as { agent_iterations: AgentIteration[] };
   return payload.agent_iterations;
+}
+
+export async function listEngineCheckpoints(
+  token: string,
+  runId: string
+): Promise<EngineCheckpoint[]> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/engine-checkpoints`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { engine_checkpoints: EngineCheckpoint[] };
+  return payload.engine_checkpoints;
 }
 
 export async function requeueDeadLetter(token: string, deadLetterId: string): Promise<RunSummary> {

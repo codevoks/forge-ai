@@ -338,6 +338,9 @@ class RunRepository:
         workflow_version: dict[str, Any],
         objective: str,
         constraints: dict[str, Any],
+        engine_kind: str = "custom",
+        engine_version: str = "custom-agent-v1",
+        engine_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         objective_id = str(uuid7())
         run_id = str(uuid7())
@@ -352,12 +355,24 @@ class RunRepository:
         run = self.conn.execute(
             """
             insert into runs
-              (id, tenant_id, workspace_id, objective_id, workflow_version_id, status, created_by)
-            values (%s, %s, %s, %s, %s, 'created', %s)
+              (id, tenant_id, workspace_id, objective_id, workflow_version_id, status,
+               engine_kind, engine_version, engine_metadata, created_by)
+            values (%s, %s, %s, %s, %s, 'created', %s, %s, %s, %s)
             returning id, tenant_id, workspace_id, objective_id, workflow_version_id,
-                      status, version, created_by, created_at, started_at, completed_at
+                      status, engine_kind, engine_version, engine_metadata, version, created_by,
+                      created_at, started_at, completed_at
             """,
-            (run_id, tenant_id, workspace_id, objective_id, workflow_version["id"], actor_id),
+            (
+                run_id,
+                tenant_id,
+                workspace_id,
+                objective_id,
+                workflow_version["id"],
+                engine_kind,
+                engine_version,
+                json.dumps(engine_metadata or {}),
+                actor_id,
+            ),
         ).fetchone()
         assert run is not None
         task_ids: dict[str, str] = {}
@@ -468,7 +483,8 @@ class RunRepository:
         row = self.conn.execute(
             """
             select r.id, r.tenant_id, r.workspace_id, r.objective_id, r.workflow_version_id,
-                   r.status, r.version, r.created_by, r.created_at, r.started_at, r.completed_at,
+                   r.status, r.engine_kind, r.engine_version, r.engine_metadata,
+                   r.version, r.created_by, r.created_at, r.started_at, r.completed_at,
                    o.objective, v.name as workflow_name
             from runs r
             join objectives o on o.id = r.objective_id
@@ -908,7 +924,8 @@ class RunRepository:
     def _run_row_for_update(self, run_id: str) -> dict[str, Any]:
         row = self.conn.execute(
             """
-            select id, tenant_id, workspace_id, status
+            select id, tenant_id, workspace_id, status, engine_kind, engine_version,
+                   engine_metadata
             from runs
             where id = %s
             for update
@@ -929,6 +946,9 @@ class RunRepository:
             "workflow_name": str(row["workflow_name"]),
             "objective": str(row["objective"]),
             "status": str(row["status"]),
+            "engine_kind": str(row.get("engine_kind", "custom")),
+            "engine_version": str(row.get("engine_version", "custom-agent-v1")),
+            "engine_metadata": row.get("engine_metadata", {}),
             "version": int(row["version"]),
             "created_by": str(row["created_by"]),
             "created_at": row["created_at"].isoformat(),
@@ -1021,7 +1041,8 @@ class WorkerRepository:
         task_id = str(envelope.payload["task_id"])
         run_row = self.conn.execute(
             """
-            select id, status, cancellation_requested_at
+            select id, status, cancellation_requested_at, engine_kind, engine_version,
+                   engine_metadata
             from runs
             where id = %s and tenant_id = %s and workspace_id = %s
             for update
@@ -1116,6 +1137,9 @@ class WorkerRepository:
             "kind": str(task["kind"]),
             "input": task["input"],
             "worker_id": worker_id,
+            "engine_kind": str(run_row.get("engine_kind", "custom")),
+            "engine_version": str(run_row.get("engine_version", "custom-agent-v1")),
+            "engine_metadata": run_row.get("engine_metadata", {}),
         }
 
     def complete_attempt(

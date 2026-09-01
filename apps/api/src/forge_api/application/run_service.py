@@ -3,6 +3,11 @@ from typing import Any
 from forge_api.api.errors import ProblemError
 from forge_api.domain.identity import ActorContext, Capability
 from forge_api.domain.workflow import validate_payload_size
+from forge_api.domain.workflow_engine import (
+    WorkflowEngineMetadata,
+    engine_version_for,
+    parse_workflow_engine_kind,
+)
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.repositories import IdempotencyRepository, canonical_hash
 from forge_api.infrastructure.workflow_repositories import RunRepository, WorkflowRepository
@@ -20,6 +25,8 @@ class RunService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         validate_payload_size(str(payload["objective"]), field="objective")
+        engine_kind = parse_workflow_engine_kind(payload.get("engine_kind"))
+        engine_metadata = WorkflowEngineMetadata(selected_by="run_create_api")
         request_hash = canonical_hash(payload)
         workspace_id = str(payload["workspace_id"])
         workflow_version_id = str(payload["workflow_version_id"])
@@ -74,6 +81,9 @@ class RunService:
                 workflow_version=workflow_version,
                 objective=str(payload["objective"]),
                 constraints=dict(payload.get("constraints", {})),
+                engine_kind=engine_kind.value,
+                engine_version=engine_version_for(engine_kind),
+                engine_metadata=engine_metadata.model_dump(mode="json"),
             )
             response = {"run": run}
             idempotency.save(

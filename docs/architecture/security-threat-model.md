@@ -46,6 +46,8 @@ Current human-approval implementation adds code-enforced exact-action approval f
 
 Current bounded-agent implementation runs model-controlled iteration inside one durable task with explicit budgets and a reusable adversarial suite. The fake model can propose `tool_call`, `complete`, `fail`, or `request_replan`, but application code validates the schema, exact run grants, strict tool arguments, citations, iteration/tool/model-call budgets, and no-progress limits on every iteration. Agent completions need persisted evidence citations. Ungranted tools, unsupported citations, replan requests, repeated invalid decisions, and step limits fail closed. Prompt-injected objectives and untrusted tool outputs are treated as data; they cannot silently change policy, grants, budgets, approvals, or tenant scope.
 
+Current LangGraph comparison implementation adds an alternate local `StateGraph` engine for the same bounded agent task. LangGraph node routing, reducers, checkpoints, and approval-interrupt representation are treated as orchestration mechanics, not authority. Forge still reloads tenant-scoped run/task state, validates model decisions, enforces exact tool grants and schemas, consumes approval gates, tracks budgets, records evidence, and commits terminal transitions in application code. Mirrored `workflow_engine_checkpoints` are sanitized, RLS-protected comparison/debug evidence and cannot be supplied by a client to resume, authorize, or mutate execution.
+
 ## Prompt-injection controls
 
 1. Keep policy/tool capability outside natural-language prompts and enforce it after every model decision.
@@ -103,3 +105,9 @@ No phase passes with known cross-tenant access, model-controlled authorization, 
 | Agent evidence citations | Protected and verified | Unsupported completion citation is rejected and fails closed |
 | Agent prompt-injection containment | Protected and verified | Prompt-injection scenario uses only granted local `customer_reports.search` and labels evidence `untrusted_tool_output` |
 | Execution-time replanning | Implemented but needing deeper final validation | Replan requests are recorded and fail closed; immutable replan lineage expansion is deferred |
+| LangGraph engine authority boundary | Protected and verified | LangGraph `unauthorized_tool` scenario rejects `billing.charge_customer v99` through Forge policy before adapter execution |
+| LangGraph checkpoint tenant isolation | Protected and verified | `workflow_engine_checkpoints` are hidden without transaction scope and require run authorization for API reads |
+| LangGraph bounded autonomy | Protected and verified | LangGraph step-limit scenario fails closed at the configured bound without uncontrolled looping |
+| LangGraph prompt-injection containment | Protected and verified | LangGraph prompt-injection scenario remains inside granted local tools and records untrusted provenance |
+| LangGraph approval interrupt boundary | Protected and verified | LangGraph approval scenario suspends at the Forge exact-action approval gate and resumes only after an eligible approval |
+| Hosted LangGraph services | Not applicable yet | Phase 8 uses only the open-source local library; no hosted service or external checkpoint store is configured |

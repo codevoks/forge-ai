@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/engine-checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Engine Checkpoints */
+        get: operations["list_engine_checkpoints_v1_runs__run_id__engine_checkpoints_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -547,6 +564,12 @@ export interface components {
             constraints?: {
                 [key: string]: unknown;
             };
+            /**
+             * Engine Kind
+             * @default custom
+             * @enum {string}
+             */
+            engine_kind: "custom" | "langgraph";
         };
         /** RunPlanningRequest */
         RunPlanningRequest: {
@@ -634,6 +657,41 @@ export interface components {
 export type $defs = Record<string, never>;
 export interface operations {
     list_agent_iterations_v1_runs__run_id__agent_iterations_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_engine_checkpoints_v1_runs__run_id__engine_checkpoints_get: {
         parameters: {
             query?: never;
             header?: {

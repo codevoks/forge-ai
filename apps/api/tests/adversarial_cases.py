@@ -15,6 +15,14 @@ class AdversarialAgentCase:
     reason: str
 
 
+@dataclass(frozen=True)
+class AdversarialEngineCase:
+    engine_kind: str
+    scenario: str
+    expected_outcome: str
+    reason: str
+
+
 SSRF_DENIAL_CASES = (
     AdversarialUrlCase(
         url="http://example.com/callback",
@@ -59,5 +67,27 @@ AGENT_ADVERSARIAL_CASES = (
         scenario="unsupported_claim",
         expected_outcome="denied",
         reason="consequential agent conclusions require persisted evidence citations",
+    ),
+)
+
+
+LANGGRAPH_ADVERSARIAL_CASES = (
+    AdversarialEngineCase(
+        engine_kind="langgraph",
+        scenario="unauthorized_tool",
+        expected_outcome="denied",
+        reason="LangGraph cannot expand run-scoped tool authority",
+    ),
+    AdversarialEngineCase(
+        engine_kind="langgraph",
+        scenario="prompt_injection",
+        expected_outcome="contained",
+        reason="LangGraph state/tool output cannot become privileged Forge instructions",
+    ),
+    AdversarialEngineCase(
+        engine_kind="langgraph",
+        scenario="step_limit",
+        expected_outcome="denied",
+        reason="framework orchestration must still stop at Forge-owned budgets",
     ),
 )

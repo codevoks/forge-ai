@@ -11,6 +11,7 @@ The following are conceptual tables; migrations are introduced in the owning pha
 | Execution | objectives, runs, plan_versions, tasks, task_dependencies, task_attempts, checkpoints | tenant scope, versions, one active attempt, DAG uniqueness |
 | AI/tools | model_calls, tool_invocations, evidence_items | provider-neutral status/usage; trust/provenance; payload size/retention |
 | Approval | approval_requests, approval_decisions | action hash, expiry, eligible actor, one terminal decision |
+| Engine comparison | workflow_engine_checkpoints | sanitized framework checkpoint metadata mapped to run/task/attempt; not authoritative |
 | Reliability | idempotency_records, inbox_messages, outbox_messages, dead_letters, leases | unique logical keys; retry schedule; claim fencing |
 | Audit | execution_events, security_audit_events | append-only application permissions; sanitized metadata |
 
@@ -145,6 +146,17 @@ Implemented bounded-agent tables currently include:
 
 `agent` workflow steps run inside one durable task, not as graph cycles. The task input declares the agent scenario, objective, explicit bounded budgets, and `allowed_tools`. At run creation, those tool versions are snapshotted into `run_tool_grants`; during execution the model can only propose a structured decision. Forge validates schema, grants, tool arguments, budgets, no-progress limits, and result citations before acting. `GET /v1/runs/{run_id}/agent-iterations` exposes the safe checkpoint ledger to authorized workspace members.
 
+Implemented workflow-engine comparison fields and tables currently include:
+
+| Record | Purpose | Important constraints |
+|---|---|---|
+| `runs.engine_kind` | Selects `custom` or `langgraph` execution strategy for comparable agent runs | Defaults to `custom`; visible in run inspection; does not change tenant/tool/approval authority |
+| `runs.engine_version` | Pins the strategy implementation version used by the run | Examples: `custom-agent-v1`, `langgraph-stategraph-v1` |
+| `runs.engine_metadata` | Stores safe selection metadata | No credentials, prompts, raw provider payloads, or secrets |
+| `workflow_engine_checkpoints` | Mirrors sanitized LangGraph checkpoint/node metadata | Tenant/workspace scoped with RLS; mapped to Forge run/task/attempt; not used for authorization or scheduling |
+
+`POST /v1/runs` accepts optional `engine_kind` with values `custom` or `langgraph`; omitting it preserves the custom engine. `GET /v1/runs/{run_id}` returns engine metadata. `GET /v1/runs/{run_id}/engine-checkpoints` returns read-only, tenant-scoped checkpoint metadata for authorized workspace members. The endpoint exposes framework comparison evidence only; no API executes arbitrary graph nodes or resumes a run from client-provided framework state.
+
 ## Asynchronous envelope
 
 Every outbox/queue message has `message_id`, `schema_version`, `type`, `occurred_at`, `tenant_id`, `workspace_id`, `aggregate_type`, `aggregate_id`, `correlation_id`, `causation_id`, `trace_context`, and a minimal payload of durable IDs. Consumers reject unknown major schema versions, validate scope against database state, and deduplicate on `message_id` plus handler name.
@@ -164,6 +176,7 @@ Queues are partitioned/routed by workload and risk (`control`, `model`, `tool_re
 - `ToolExecutor.invoke(AuthorizedInvocation) -> ToolResult`
 - `QueuePort.publish/consume/ack/nack/extend_lease`
 - `CheckpointStore.save/load`
+- `WorkflowEngine.invoke_for_claim(claim) -> task_result`
 - `TelemetryPort` and `Clock`/`IdGenerator` for deterministic tests.
 
 Provider errors are normalized into `invalid_request`, `auth`, `rate_limited`, `transient`, `timeout`, `policy_blocked`, and `unknown`; only explicitly retryable classes enter backoff.

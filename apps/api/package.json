@@ -4,6 +4,7 @@
   "scripts": {
     "build": "../../.venv/bin/python -m compileall src tests",
     "demo:agentic": "../../.venv/bin/python -m forge_api.scripts.demo_agentic",
+    "demo:langgraph": "../../.venv/bin/python -m forge_api.scripts.demo_langgraph",
     "demo:planning": "../../.venv/bin/python -m forge_api.scripts.demo_planning",
     "demo:approvals": "../../.venv/bin/python -m forge_api.scripts.demo_approvals",
     "demo:recovery": "../../.venv/bin/python -m forge_api.scripts.demo_recovery",

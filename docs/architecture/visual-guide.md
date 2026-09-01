@@ -324,3 +324,36 @@ flowchart TD
     COMMIT -- permanent failure --> DLQ
     RECOVER --> MSG
 ```
+
+## LangGraph comparison boundary
+
+Phase 8 adds LangGraph as a selectable engine for the same bounded agent task. The graph routes between nodes, but Forge-owned services still enforce every security, durability, and effect boundary.
+
+```mermaid
+flowchart TD
+    RUN[Run\nengine_kind custom or langgraph]
+    CLAIM[Worker claim\nlease + fencing]
+    SELECT{WorkflowEngine}
+    CUSTOM[Custom AgentRuntime]
+    LG[LangGraph StateGraph\nload -> decide -> validate -> tool/complete/fail]
+    MODEL[Deterministic fake model\nuntrusted proposal]
+    POLICY[Forge policy + grants + schemas + budgets]
+    APPROVAL[Forge exact-action approval gate]
+    TOOL[Forge ToolRuntime\nlocal deterministic adapters]
+    LEDGER[PostgreSQL authority\nruns/tasks/attempts/events/iterations/evidence]
+    LGCHECK[workflow_engine_checkpoints\nsanitized comparison evidence]
+    DENY[Fail closed]
+
+    RUN --> CLAIM --> SELECT
+    SELECT -- custom --> CUSTOM
+    SELECT -- langgraph --> LG
+    CUSTOM --> MODEL
+    LG --> MODEL
+    MODEL --> POLICY
+    POLICY -- deny --> DENY --> LEDGER
+    POLICY -- allowed low risk --> TOOL --> LEDGER
+    POLICY -- high risk --> APPROVAL --> TOOL
+    LG -. mirror sanitized checkpoints .-> LGCHECK
+    LGCHECK -. never authorizes .-> POLICY
+    TOOL --> LEDGER
+```

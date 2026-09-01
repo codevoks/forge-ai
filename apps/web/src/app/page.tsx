@@ -13,6 +13,7 @@ import {
   getWorkerState,
   listAgentIterations,
   listDeadLetters,
+  listEngineCheckpoints,
   listEvidence,
   listEvents,
   listModelCalls,
@@ -29,6 +30,7 @@ import {
   type ApprovalRequest,
   type AgentIteration,
   type DeadLetter,
+  type EngineCheckpoint,
   type EvidenceItem,
   type ExecutionEvent,
   type ModelCall,
@@ -50,6 +52,7 @@ type PlanningScenario =
   | "cyclic_plan"
   | "refusal"
   | "prompt_injection";
+type EngineKind = "custom" | "langgraph";
 
 const buttonBase =
   "cursor-pointer rounded-full border border-zinc-800 bg-[#0d0d0f] px-3.5 py-2 text-sm font-medium text-zinc-100 transition duration-150 hover:-translate-y-0.5 hover:border-zinc-700 hover:bg-[#141417]";
@@ -75,6 +78,7 @@ export default function Home() {
   const [token, setToken] = useState("");
   const [workflows, setWorkflows] = useState<WorkflowVersion[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
+  const [selectedEngine, setSelectedEngine] = useState<EngineKind>("custom");
   const [run, setRun] = useState<RunSummary | null>(null);
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [events, setEvents] = useState<ExecutionEvent[]>([]);
@@ -85,6 +89,7 @@ export default function Home() {
   const [modelCalls, setModelCalls] = useState<ModelCall[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [agentIterations, setAgentIterations] = useState<AgentIteration[]>([]);
+  const [engineCheckpoints, setEngineCheckpoints] = useState<EngineCheckpoint[]>([]);
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
   const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
@@ -101,6 +106,7 @@ export default function Home() {
     setModelCalls([]);
     setApprovals([]);
     setAgentIterations([]);
+    setEngineCheckpoints([]);
     setWorkflows([]);
     setSelectedWorkflowId("");
     setTools([]);
@@ -169,6 +175,9 @@ export default function Home() {
     setApprovals(await listApprovals(token));
     const hasAgentTask = nextTasks.some((task) => task.kind === "agent");
     setAgentIterations(hasAgentTask ? await listAgentIterations(token, runId) : []);
+    setEngineCheckpoints(
+      nextRun.engine_kind === "langgraph" ? await listEngineCheckpoints(token, runId) : []
+    );
     const hasToolOrAgentTask = nextTasks.some((task) => task.kind === "tool" || task.kind === "agent");
     if (hasToolOrAgentTask) {
       const [nextInvocations, nextEvidence] = await Promise.all([
@@ -195,6 +204,7 @@ export default function Home() {
       const nextRun = await createRun(token, {
         workspace_id: selectedWorkflow.workspace_id,
         workflow_version_id: selectedWorkflow.id,
+        engine_kind: selectedEngine,
         objective:
           selectedWorkflow.name === "Typed Tool Demo"
             ? "Demonstrate typed tool runtime, invocation ledger, and evidence provenance."
@@ -628,6 +638,7 @@ export default function Home() {
                     setPlans([]);
                     setModelCalls([]);
                     setAgentIterations([]);
+                    setEngineCheckpoints([]);
                   }}
                 >
                   {workflow.name}
@@ -644,6 +655,35 @@ export default function Home() {
                 </article>
               ))}
             </div>
+
+            <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm text-zinc-400">Workflow engine strategy</p>
+                  <h3 className="mt-1 font-semibold text-zinc-50">
+                    Custom runtime or LangGraph StateGraph, same Forge authority
+                  </h3>
+                  <p className="mt-2 text-sm text-zinc-400">
+                    LangGraph is selected per run for comparison. PostgreSQL, policy, tools,
+                    approvals, budgets, and evidence remain enforced by Forge application code.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className={`${buttonBase} ${selectedEngine === "custom" ? activeButton : ""}`}
+                    onClick={() => setSelectedEngine("custom")}
+                  >
+                    Custom engine
+                  </button>
+                  <button
+                    className={`${buttonBase} ${selectedEngine === "langgraph" ? activeButton : ""}`}
+                    onClick={() => setSelectedEngine("langgraph")}
+                  >
+                    LangGraph engine
+                  </button>
+                </div>
+              </div>
+            </div>
           </section>
         ) : null}
 
@@ -656,6 +696,10 @@ export default function Home() {
                 <p className="mt-2 text-sm text-zinc-400">
                   Status: <span className="text-violet-200">{run.status}</span> · Version:{" "}
                   {run.version}
+                </p>
+                <p className="mt-2 text-sm text-zinc-400">
+                  Engine: <span className="font-mono text-violet-200">{run.engine_kind}</span> ·{" "}
+                  {run.engine_version}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -694,6 +738,48 @@ export default function Home() {
                 </article>
               ))}
             </div>
+
+            {engineCheckpoints.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-zinc-400">LangGraph checkpoint mirror</p>
+                    <h3 className="mt-1 font-semibold text-zinc-50">
+                      Framework graph state is inspectable, but not authoritative
+                    </h3>
+                    <p className="mt-2 text-sm text-zinc-400">
+                      These rows are tenant-scoped checkpoint metadata mapped to Forge run/task
+                      IDs. They expose node flow and reducer history without storing secrets.
+                    </p>
+                  </div>
+                  <span className={pillClass}>{engineCheckpoints.length} checkpoints</span>
+                </div>
+                <div className="mt-4 grid gap-3">
+                  {engineCheckpoints.slice(-6).map((checkpoint) => (
+                    <article className={cardClass} key={checkpoint.id}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={pillClass}>{checkpoint.node_name}</span>
+                        <span className={mutedPillClass}>{checkpoint.namespace}</span>
+                        <span className={mutedPillClass}>{checkpoint.engine_version}</span>
+                      </div>
+                      <p className="mt-2 break-all font-mono text-xs text-violet-200">
+                        checkpoint {checkpoint.checkpoint_id.slice(0, 28)}…
+                      </p>
+                      <pre className="mt-3 max-h-40 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
+                        {JSON.stringify(
+                          {
+                            state_summary: checkpoint.state_summary,
+                            metadata: checkpoint.metadata
+                          },
+                          null,
+                          2
+                        )}
+                      </pre>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {agentIterations.length > 0 ? (
               <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">

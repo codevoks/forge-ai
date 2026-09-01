@@ -1,7 +1,7 @@
 from typing import Any
 
 from forge_api.api.errors import ProblemError
-from forge_api.application.agent_runtime import AgentRuntime
+from forge_api.application.agent_runtime import AgentRuntime, LangGraphAgentRuntime
 from forge_api.application.tool_runtime import ToolRuntime
 from forge_api.domain.approvals import ApprovalRequiredError
 from forge_api.domain.reliability import JobEnvelope, RetryPolicy, sanitize_payload
@@ -35,9 +35,12 @@ class DeterministicTaskExecutor:
     def __init__(self, *, tool_runtime: ToolRuntime, agent_runtime: AgentRuntime) -> None:
         self.tool_runtime = tool_runtime
         self.agent_runtime = agent_runtime
+        self.langgraph_agent_runtime = LangGraphAgentRuntime(database=agent_runtime.database)
 
     def execute(self, claim: dict[str, Any]) -> dict[str, Any]:
         if claim.get("kind") == "agent":
+            if claim.get("engine_kind") == "langgraph":
+                return self.langgraph_agent_runtime.invoke_for_claim(claim)
             return self.agent_runtime.invoke_for_claim(claim)
         if claim.get("kind") == "tool":
             return self.tool_runtime.invoke_for_claim(claim)

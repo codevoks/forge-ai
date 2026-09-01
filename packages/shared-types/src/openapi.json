@@ -65,6 +65,66 @@
         }
       }
     },
+    "/v1/runs/{run_id}/engine-checkpoints": {
+      "get": {
+        "tags": [
+          "workflow-engines"
+        ],
+        "summary": "List Engine Checkpoints",
+        "operationId": "list_engine_checkpoints_v1_runs__run_id__engine_checkpoints_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Engine Checkpoints V1 Runs  Run Id  Engine Checkpoints Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "tags": [
@@ -1982,6 +2042,15 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Constraints"
+          },
+          "engine_kind": {
+            "type": "string",
+            "enum": [
+              "custom",
+              "langgraph"
+            ],
+            "title": "Engine Kind",
+            "default": "custom"
           }
         },
         "type": "object",
