@@ -24,6 +24,7 @@ from forge_api.domain.workflow import validate_payload_size
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.model_providers import (
     DeterministicFakeModelProvider,
+    LangChainDeterministicModelProvider,
     OpenAICompatibleModelProvider,
 )
 from forge_api.infrastructure.planning_repositories import (
@@ -361,6 +362,8 @@ class PlannerService:
     def _provider_for(self, provider_kind: ModelProviderKind) -> ModelProvider:
         if provider_kind == ModelProviderKind.FAKE:
             return DeterministicFakeModelProvider()
+        if provider_kind == ModelProviderKind.LANGCHAIN_FAKE:
+            return LangChainDeterministicModelProvider()
         if provider_kind == ModelProviderKind.OPENAI_COMPATIBLE:
             return OpenAICompatibleModelProvider(settings=self.settings)
         raise ProblemError(422, "model_provider_invalid", "Requested model provider is invalid.")

@@ -19,9 +19,11 @@ This matrix prevents capabilities from disappearing between phase handoffs. Deta
 | Privilege/secret/SSRF/replay/denial-of-wallet/runaway-loop controls | security threat model | 6; hardened 13 |
 | Bounded agent loop, persisted iterations, citations, and termination | domain/data/failure/security contracts | 7 |
 | LangGraph nodes/edges/reducers/tools/checkpoints/interrupts/comparison | decisions Q-004, system/data/failure/security contracts | 8 |
+| LangChain model/provider/prompt/tool/structured-output interoperability without transferring authority | decisions Q-011, model/data/security contracts | 9 |
 | Fake models, golden/adversarial/failure scenarios and behavioral/live eval separation | requirements/decisions | 9 |
+| LangSmith evaluation/experiment export seam with offline fallback and opt-in live execution | decisions Q-012, scale/observability/security contracts | 9, 10, 13 |
 | Plan/tool/task/permission/approval/hallucination/cost/latency metrics | scale/cost contract | 9 |
-| Event history, causal debugging, safe deterministic/simulation replay | failure/data contracts | 10 |
+| Event history, causal debugging, safe deterministic/simulation replay, LangGraph checkpoint/state inspection | failure/data contracts | 10 |
 | MCP client/server/discovery/schema/invocation/auth/trust; owner-built server | decisions/ports | 11 |
 | Router/supervisor/handoff/parallelism/isolation/aggregation/failure comparison | decisions Q-006 | 12 |
 | Temporal evaluation/integration criteria | decisions Q-005 | 13 |
@@ -34,5 +36,6 @@ This matrix prevents capabilities from disappearing between phase handoffs. Deta
 | 3–6 private exercises, quizzes, reconstruction, cumulative assessment | phase contracts/gate rules | every phase |
 | Explain/design/implement/debug/defend hiring standard | requirements/phase gates | every phase; final 13 |
 | Private owner education in natural Roman-script Hinglish; public engineering artifacts in professional English | AGENTS/phase gate contract | every phase |
+| Final LangChain, LangGraph, and LangSmith executed integration coverage with tests, security validation, demo, documentation, and zero-cost fallback | decisions Q-011/Q-004/Q-012, AGENTS | 8–13 |
 
 Anything added later must enter this matrix with an owner phase, security/failure implications, test evidence, and learning evidence.

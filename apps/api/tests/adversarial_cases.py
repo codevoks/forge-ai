@@ -23,6 +23,13 @@ class AdversarialEngineCase:
     reason: str
 
 
+@dataclass(frozen=True)
+class AdversarialEvaluationCase:
+    case_key: str
+    expected_outcome: str
+    reason: str
+
+
 SSRF_DENIAL_CASES = (
     AdversarialUrlCase(
         url="http://example.com/callback",
@@ -89,5 +96,24 @@ LANGGRAPH_ADVERSARIAL_CASES = (
         scenario="step_limit",
         expected_outcome="denied",
         reason="framework orchestration must still stop at Forge-owned budgets",
+    ),
+)
+
+
+EVALUATION_ADVERSARIAL_CASES = (
+    AdversarialEvaluationCase(
+        case_key="langchain_hallucinated_tool_denied",
+        expected_outcome="passed",
+        reason="LangChain interop cannot expand allowed tool authority",
+    ),
+    AdversarialEvaluationCase(
+        case_key="langchain_prompt_injection_contained",
+        expected_outcome="passed",
+        reason="prompt-injected input remains untrusted data inside Forge validation",
+    ),
+    AdversarialEvaluationCase(
+        case_key="langgraph_step_limit_failure",
+        expected_outcome="passed",
+        reason="framework orchestration must terminate at Forge-owned budgets",
     ),
 )

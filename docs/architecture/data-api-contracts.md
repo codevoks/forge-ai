@@ -12,6 +12,7 @@ The following are conceptual tables; migrations are introduced in the owning pha
 | AI/tools | model_calls, tool_invocations, evidence_items | provider-neutral status/usage; trust/provenance; payload size/retention |
 | Approval | approval_requests, approval_decisions | action hash, expiry, eligible actor, one terminal decision |
 | Engine comparison | workflow_engine_checkpoints | sanitized framework checkpoint metadata mapped to run/task/attempt; not authoritative |
+| Evaluation | evaluation_suites, evaluation_cases, evaluation_runs, evaluation_case_results, metric_values, evaluation_exports | tenant-scoped deterministic suites, case verdicts, normalized metrics, and sanitized optional export artifacts |
 | Reliability | idempotency_records, inbox_messages, outbox_messages, dead_letters, leases | unique logical keys; retry schedule; claim fencing |
 | Audit | execution_events, security_audit_events | append-only application permissions; sanitized metadata |
 
@@ -99,6 +100,9 @@ GET /v1/approvals
 POST /v1/approvals/{approval_request_id}:approve
 POST /v1/approvals/{approval_request_id}:reject
 POST /v1/approvals:expire
+POST /v1/evaluations
+GET /v1/evaluations
+GET /v1/evaluations/{evaluation_run_id}
 ```
 
 `POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
@@ -157,6 +161,19 @@ Implemented workflow-engine comparison fields and tables currently include:
 
 `POST /v1/runs` accepts optional `engine_kind` with values `custom` or `langgraph`; omitting it preserves the custom engine. `GET /v1/runs/{run_id}` returns engine metadata. `GET /v1/runs/{run_id}/engine-checkpoints` returns read-only, tenant-scoped checkpoint metadata for authorized workspace members. The endpoint exposes framework comparison evidence only; no API executes arbitrary graph nodes or resumes a run from client-provided framework state.
 
+Implemented evaluation harness tables currently include:
+
+| Table | Purpose | Important constraints |
+|---|---|---|
+| `evaluation_suites` | Versioned offline regression suite metadata | Tenant/workspace scoped; unique suite name/version per workspace |
+| `evaluation_cases` | Frozen deterministic case definitions | Case key, category, security-critical flag, and expected outcome are versioned data |
+| `evaluation_runs` | One persisted suite execution | Status, provider path, engine matrix, external-integration mode, LangSmith export mode, and summary |
+| `evaluation_case_results` | Per-case verdict and artifacts | Security-critical failures remain visible and cannot be averaged away |
+| `metric_values` | Normalized metrics with provenance | Distinguishes deterministic, synthetic, and measured-local evidence |
+| `evaluation_exports` | Optional export seam records | Default LangSmith-shaped export is a local artifact; live export is explicit opt-in |
+
+`POST /v1/evaluations` requires `Idempotency-Key` and `run.create` on the target workspace. The offline suite drives real Forge application services: planner/model-call persistence, LangChain deterministic provider wrapping, LangGraph/custom engine execution, worker safe-failure handling, and export artifact generation. `langsmith_export_mode=enabled` fails closed while external integrations are disabled. `GET /v1/evaluations` and `GET /v1/evaluations/{evaluation_run_id}` are tenant/workspace scoped by actor context and RLS.
+
 ## Asynchronous envelope
 
 Every outbox/queue message has `message_id`, `schema_version`, `type`, `occurred_at`, `tenant_id`, `workspace_id`, `aggregate_type`, `aggregate_id`, `correlation_id`, `causation_id`, `trace_context`, and a minimal payload of durable IDs. Consumers reject unknown major schema versions, validate scope against database state, and deduplicate on `message_id` plus handler name.
@@ -177,6 +194,8 @@ Queues are partitioned/routed by workload and risk (`control`, `model`, `tool_re
 - `QueuePort.publish/consume/ack/nack/extend_lease`
 - `CheckpointStore.save/load`
 - `WorkflowEngine.invoke_for_claim(claim) -> task_result`
+- `EvaluationRunner.run(suite, providers, engines) -> EvaluationRun`
+- `LangSmithExperimentExporter.export(run, results, metrics) -> local_artifact | blocked | exported`
 - `TelemetryPort` and `Clock`/`IdGenerator` for deterministic tests.
 
 Provider errors are normalized into `invalid_request`, `auth`, `rate_limited`, `transient`, `timeout`, `policy_blocked`, and `unknown`; only explicitly retryable classes enter backoff.

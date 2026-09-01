@@ -32,6 +32,12 @@ def main() -> None:
         tenant_id=TENANT_ID,
         actor_id="00000000-0000-0000-0000-000000000000",
     ) as conn:
+        conn.execute("delete from evaluation_exports")
+        conn.execute("delete from metric_values")
+        conn.execute("delete from evaluation_case_results")
+        conn.execute("delete from evaluation_runs")
+        conn.execute("delete from evaluation_cases")
+        conn.execute("delete from evaluation_suites")
         conn.execute("delete from plan_edges")
         conn.execute("delete from plan_nodes")
         conn.execute("delete from plan_versions")

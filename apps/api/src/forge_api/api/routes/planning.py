@@ -18,7 +18,7 @@ router = APIRouter(prefix="/v1/runs", tags=["planning"])
 
 
 class RunPlanningRequest(BaseModel):
-    provider: Literal["fake", "openai_compatible"] = "fake"
+    provider: Literal["fake", "langchain_fake", "openai_compatible"] = "fake"
     fake_scenario: Literal[
         "valid",
         "repairable_malformed",

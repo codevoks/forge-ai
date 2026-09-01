@@ -6,6 +6,7 @@ dependencies = [
   "cryptography==45.0.6",
   "fastapi==0.116.1",
   "httpx==0.28.1",
+  "langchain==1.3.18",
   "langgraph==1.2.11",
   "psycopg[binary]==3.2.9",
   "pydantic-settings==2.10.1",
@@ -45,4 +46,8 @@ packages = ["forge_api"]
 
 [[tool.mypy.overrides]]
 module = ["redis", "redis.exceptions"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["langchain", "langchain.*", "langchain_core", "langchain_core.*", "langsmith", "langsmith.*"]
 ignore_missing_imports = true

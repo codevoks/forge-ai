@@ -19,11 +19,11 @@ Specification and report filenames always include the two-digit phase number and
 | [Phase 06 — Human approval and AI security](phase-06-human-approval-ai-security.md) | Exact-action approval, guardrails, trust boundaries, adversarial controls | Phase 05 |
 | [Phase 07 — Bounded agentic workflow](phase-07-bounded-agentic-workflow.md) | End-to-end planner/runtime/tools/approval agentic workflow | Phase 06 |
 | [Phase 08 — LangGraph implementation and comparison](phase-08-langgraph-implementation-comparison.md) | LangGraph parity implementation and evidence-based comparison | Phase 07 |
-| [Phase 09 — Evaluation and failure injection](phase-09-evaluation-failure-injection.md) | Evaluation harness, fake models, adversarial suites, failure injection | Phase 08 |
-| [Phase 10 — Execution history, debugging, and replay](phase-10-execution-history-debugging-replay.md) | Event history, debugger, safe replay, live progress | Phase 09 |
+| [Phase 09 — Evaluation, failure injection, and LangChain interoperability](phase-09-evaluation-failure-injection.md) | Evaluation harness, fake models, adversarial suites, failure injection, LangChain provider/prompt/tool/structured-output interop, initial LangSmith experiment/export seam | Phase 08 |
+| [Phase 10 — Execution history, debugging, replay, and trace export](phase-10-execution-history-debugging-replay.md) | Event history, debugger, safe replay, live progress, LangGraph state inspection, OTel/LangSmith trace-linking seam | Phase 09 |
 | [Phase 11 — MCP interoperability](phase-11-mcp-interoperability.md) | MCP client/server discovery and invocation behind tool policy | Phase 10 |
 | [Phase 12 — Multi-agent patterns](phase-12-multi-agent-patterns.md) | Parallel specialists, routing/supervision, measured single-vs-multi comparison | Phase 11 |
-| [Phase 13 — Temporal, observability, and cloud hardening](phase-13-temporal-observability-cloud-hardening.md) | Temporal decision, observability, budgets, AWS/Terraform, scale hardening | Phase 12 |
+| [Phase 13 — Temporal, LangSmith observability, and cloud hardening](phase-13-temporal-observability-cloud-hardening.md) | Temporal decision, LangSmith/OTel observability, budgets, AWS/Terraform, scale hardening | Phase 12 |
 
 ## Universal phase exit procedure
 
@@ -40,6 +40,16 @@ Specification and report filenames always include the two-digit phase number and
 ## Phase specification contract
 
 Each file explicitly lists scope, concepts, architecture and data changes, modules, APIs/interfaces, security, failures, tests, acceptance, learning objectives, exercises, expected system-design knowledge, and deferrals. Where the implementation discovers contrary evidence, write an ADR rather than silently changing the cross-phase contract.
+
+## LangChain, LangGraph, and LangSmith final coverage gate
+
+The remaining roadmap may enhance subsystems originally delivered in earlier phases, but historical phase tags and completion reports remain unchanged. Final completion requires executed evidence, not package presence:
+
+| Technology | Natural subsystem | Remaining implementation location | Required evidence |
+|---|---|---|---|
+| LangChain | Model/provider, prompt/message, structured-output, tool interoperability, and composition around the Phase 5 planning/model boundary | Phase 9 | Offline deterministic LangChain-backed adapter/composition path, parity/regression tests, security tests proving Forge remains authoritative, demo/report output, and zero-cost fallback |
+| LangGraph | Stateful agent orchestration, graph state, nodes, reducers, checkpoints, interrupts/HITL, and state inspection around the Phase 7 bounded-agent boundary | Already introduced in Phase 8; evaluated further in Phase 9 and debugged/replayed further in Phase 10 | Executed LangGraph run path, checkpoint evidence, parity/adversarial tests, user-visible demo, and proof that Forge remains the control plane |
+| LangSmith | Evaluation/tracing/experiment observability around model calls, tool calls, agent iterations, datasets, and regression runs | Phase 9 initial experiment/export seam; Phase 10 trace correlation; Phase 13 final optional live/self-hosted adapter validation | Implemented opt-in adapter, redaction/tenant/security/exporter-outage tests, local offline fallback demo, and explicitly approved live/self-hosted evidence if available |
 
 ## Permanent learning-language contract
 

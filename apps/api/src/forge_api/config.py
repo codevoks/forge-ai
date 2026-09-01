@@ -19,10 +19,13 @@ class Settings(BaseSettings):
     worker_tick_seconds: float = 1.0
     task_lease_seconds: int = 30
     task_max_attempts: int = 3
-    model_provider: Literal["fake", "openai_compatible"] = "fake"
+    model_provider: Literal["fake", "langchain_fake", "openai_compatible"] = "fake"
     live_model_base_url: str = "https://api.openai.com/v1"
     live_model_name: str = "gpt-4o-mini"
     live_model_api_key: str = ""
+    langsmith_export_mode: Literal["local", "disabled", "enabled"] = "local"
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+    langsmith_api_key: str = ""
     oidc_issuer: str = "http://forge.local/oidc"
     oidc_audience: str = "forge-local"
     oidc_jwks_path: Path = Field(default=Path("local/jwks.json"))
@@ -34,3 +37,5 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "Default Forge commands require the deterministic fake model provider."
             )
+        if self.langsmith_export_mode == "enabled":
+            raise RuntimeError("Default Forge commands cannot enable external LangSmith export.")

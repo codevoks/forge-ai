@@ -38,6 +38,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/evaluations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Evaluation Runs */
+        get: operations["list_evaluation_runs_v1_evaluations_get"];
+        put?: never;
+        /** Create Evaluation Run */
+        post: operations["create_evaluation_run_v1_evaluations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/evaluations/{evaluation_run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Evaluation Run */
+        get: operations["get_evaluation_run_v1_evaluations__evaluation_run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -542,6 +577,28 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** EvaluationRunRequest */
+        EvaluationRunRequest: {
+            /** Workspace Id */
+            workspace_id: string;
+            /**
+             * Provider Path
+             * @default native_and_langchain
+             * @constant
+             */
+            provider_path: "native_and_langchain";
+            /**
+             * Include Langgraph
+             * @default true
+             */
+            include_langgraph: boolean;
+            /**
+             * Langsmith Export Mode
+             * @default local
+             * @enum {string}
+             */
+            langsmith_export_mode: "local" | "disabled" | "enabled";
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -578,7 +635,7 @@ export interface components {
              * @default fake
              * @enum {string}
              */
-            provider: "fake" | "openai_compatible";
+            provider: "fake" | "langchain_fake" | "openai_compatible";
             /**
              * Fake Scenario
              * @default valid
@@ -699,6 +756,114 @@ export interface operations {
             };
             path: {
                 run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_evaluation_runs_v1_evaluations_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_evaluation_run_v1_evaluations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "idempotency-key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_evaluation_run_v1_evaluations__evaluation_run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                evaluation_run_id: string;
             };
             cookie?: never;
         };

@@ -111,3 +111,9 @@ No phase passes with known cross-tenant access, model-controlled authorization, 
 | LangGraph prompt-injection containment | Protected and verified | LangGraph prompt-injection scenario remains inside granted local tools and records untrusted provenance |
 | LangGraph approval interrupt boundary | Protected and verified | LangGraph approval scenario suspends at the Forge exact-action approval gate and resumes only after an eligible approval |
 | Hosted LangGraph services | Not applicable yet | Phase 8 uses only the open-source local library; no hosted service or external checkpoint store is configured |
+| LangChain provider boundary | Protected and verified | `langchain_fake` wraps the deterministic fake provider through LangChain prompt/runnable primitives; Forge still validates schema, allowed tools, budgets, plan DAG, and model-call cost flags |
+| Evaluation result tenant isolation | Protected and verified | Evaluation endpoints require workspace membership and RLS hides cross-tenant evaluation rows |
+| Evaluation execution authorization | Protected and verified | Offline suite execution requires `run.create`; viewer execution returns `evaluation_run_forbidden` |
+| LangSmith export seam | Protected and verified for zero-cost mode | Default export is a local sanitized artifact with `live_export=false`; `langsmith_export_mode=enabled` fails closed while external integrations are disabled |
+| Security/adversarial suite increment | Protected and verified | Offline suite records security-critical LangChain hallucinated-tool denial, prompt-injection containment, and LangGraph step-limit safe failure |
+| Live LangSmith account-backed export | Not applicable yet | No approved account or endpoint is configured; live export is opt-in and does not block the zero-cost path |

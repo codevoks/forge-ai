@@ -27,10 +27,12 @@ import {
   requeueDeadLetter,
   rejectRequest,
   runRecoveryScan,
+  runOfflineEvaluation,
   type ApprovalRequest,
   type AgentIteration,
   type DeadLetter,
   type EngineCheckpoint,
+  type EvaluationRun,
   type EvidenceItem,
   type ExecutionEvent,
   type ModelCall,
@@ -93,6 +95,8 @@ export default function Home() {
   const [workerState, setWorkerState] = useState<WorkerState | null>(null);
   const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
   const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
+  const [evaluationRun, setEvaluationRun] = useState<EvaluationRun | null>(null);
+  const [evaluationRunning, setEvaluationRunning] = useState(false);
 
   async function loadIdentity(subject: DemoSubject) {
     setSelected(subject);
@@ -113,6 +117,8 @@ export default function Home() {
     setWorkerState(null);
     setDeadLetters([]);
     setRecovery(null);
+    setEvaluationRun(null);
+    setEvaluationRunning(false);
     setStatus("Loading signed local token and workspace scope...");
     try {
       const nextToken = await getDemoToken(subject);
@@ -292,6 +298,29 @@ export default function Home() {
     }
   }
 
+  async function runEvaluationHarness() {
+    const workspaceId = actor?.workspaces[0]?.id;
+    if (!token || !workspaceId) {
+      return;
+    }
+    setError("");
+    setEvaluationRunning(true);
+    setStatus("Running offline evaluation suite with LangChain, LangGraph, and local LangSmith artifact...");
+    try {
+      const nextEvaluationRun = await runOfflineEvaluation(token, workspaceId);
+      setEvaluationRun(nextEvaluationRun);
+      await refreshOperations();
+      setStatus(
+        `Evaluation ${nextEvaluationRun.status}. Cases: ${nextEvaluationRun.summary.passed_cases}/${nextEvaluationRun.summary.total_cases}; paid provider calls: ${nextEvaluationRun.summary.paid_provider_calls}.`
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Offline evaluation failed safely.");
+    } finally {
+      setEvaluationRunning(false);
+    }
+  }
+
   async function retryDeadLetter(deadLetterId: string) {
     if (!token) {
       return;
@@ -396,6 +425,12 @@ export default function Home() {
   const latestModelCall = modelCalls[0];
   const runApprovals = run ? approvals.filter((approval) => approval.run_id === run.id) : [];
   const pendingRunApproval = runApprovals.find((approval) => approval.status === "pending");
+  const canRunEvaluations = hasCapability(actor, "run.create");
+  const evaluationMetrics = evaluationRun
+    ? Object.fromEntries(
+        evaluationRun.metrics.map((metric) => [metric.metric_name, metric.metric_value])
+      )
+    : {};
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(167,139,250,0.16),transparent_32rem),linear-gradient(180deg,#09090b_0%,#050505_44%)] px-6 py-8">
@@ -566,6 +601,153 @@ export default function Home() {
                 </div>
               </div>
             ) : null}
+          </section>
+        ) : null}
+
+        {actor ? (
+          <section className={panelClass}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-sm text-zinc-400">Offline evaluation harness</p>
+                <h2 className="mt-1 text-xl font-semibold text-zinc-50">
+                  LangChain, LangGraph, security, and failure-injection regression
+                </h2>
+                <p className="mt-2 text-sm text-zinc-400">
+                  Runs deterministic model/provider cases, real Forge planner validation, real
+                  worker/agent execution, LangGraph checkpointing, and a local LangSmith-shaped
+                  export artifact. Live providers remain disabled by default.
+                </p>
+              </div>
+              <button
+                className={`${buttonBase} ${canRunEvaluations ? activeButton : "opacity-50"}`}
+                disabled={!canRunEvaluations || evaluationRunning}
+                onClick={() => void runEvaluationHarness()}
+              >
+                {evaluationRunning ? "Running..." : "Run offline evaluation"}
+              </button>
+            </div>
+
+            {evaluationRun ? (
+              <div className="mt-4 grid gap-4">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                  <article className={cardClass}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Status</p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                      {evaluationRun.status}
+                    </p>
+                  </article>
+                  <article className={cardClass}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Cases</p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                      {String(evaluationRun.summary.passed_cases)}/
+                      {String(evaluationRun.summary.total_cases)}
+                    </p>
+                  </article>
+                  <article className={cardClass}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Security</p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                      {String(evaluationRun.summary.security_failed_cases)} failed
+                    </p>
+                  </article>
+                  <article className={cardClass}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">
+                      LangSmith
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                      {evaluationRun.exports[0]?.status ?? "none"}
+                    </p>
+                  </article>
+                  <article className={cardClass}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Cost</p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                      {String(evaluationRun.summary.paid_provider_calls)}
+                    </p>
+                  </article>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-[1.25fr_0.75fr]">
+                  <article className={cardClass}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="font-semibold text-zinc-50">Case results</h3>
+                      <span className={pillClass}>
+                        pass rate {String(evaluationMetrics.case_pass_rate ?? "n/a")}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      {evaluationRun.case_results.map((caseResult) => (
+                        <div
+                          className="rounded-xl border border-zinc-800 bg-black/30 p-3"
+                          key={caseResult.id}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={
+                                caseResult.status === "passed"
+                                  ? pillClass
+                                  : "rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-1 text-xs text-rose-200"
+                              }
+                            >
+                              {caseResult.status}
+                            </span>
+                            <span className={mutedPillClass}>{caseResult.category}</span>
+                            <span className={mutedPillClass}>{caseResult.provider}</span>
+                            {caseResult.engine_kind ? (
+                              <span className={mutedPillClass}>{caseResult.engine_kind}</span>
+                            ) : null}
+                            {caseResult.security_critical ? (
+                              <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs text-amber-200">
+                                security critical
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-2 font-mono text-xs text-violet-200">
+                            {caseResult.case_key}
+                          </p>
+                          {caseResult.failure_message ? (
+                            <p className="mt-2 text-sm text-rose-300">
+                              {caseResult.failure_message}
+                            </p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+
+                  <article className={cardClass}>
+                    <h3 className="font-semibold text-zinc-50">Framework evidence</h3>
+                    <div className="mt-3 grid gap-2 text-sm text-zinc-300">
+                      <p>
+                        LangChain exercised:{" "}
+                        {String(evaluationRun.summary.langchain_provider_exercised)}
+                      </p>
+                      <p>
+                        LangGraph exercised: {String(evaluationRun.summary.langgraph_exercised)}
+                      </p>
+                      <p>
+                        Live LangSmith export:{" "}
+                        {String(evaluationRun.summary.langsmith_live_export)}
+                      </p>
+                      <p>External integrations: {evaluationRun.external_integrations}</p>
+                    </div>
+                    <pre className="mt-4 max-h-80 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
+                      {JSON.stringify(
+                        {
+                          metrics: evaluationMetrics,
+                          langsmith_export: evaluationRun.exports[0]?.artifact
+                        },
+                        null,
+                        2
+                      )}
+                    </pre>
+                  </article>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-zinc-500">
+                Select Alice Admin, then run the offline suite to inspect persisted case results,
+                metrics, and export evidence.
+              </p>
+            )}
           </section>
         ) : null}
 

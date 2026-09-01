@@ -17,6 +17,7 @@ MAX_CORRECTION_ATTEMPTS = 2
 
 class ModelProviderKind(StrEnum):
     FAKE = "fake"
+    LANGCHAIN_FAKE = "langchain_fake"
     OPENAI_COMPATIBLE = "openai_compatible"
 
 

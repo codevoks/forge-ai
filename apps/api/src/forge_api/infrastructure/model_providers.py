@@ -3,6 +3,9 @@ import time
 from typing import Any
 
 import httpx
+import langchain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableLambda
 
 from forge_api.api.errors import ProblemError
 from forge_api.config import Settings
@@ -198,9 +201,65 @@ class OpenAICompatibleModelProvider:
             ) from exc
 
 
+class LangChainDeterministicModelProvider:
+    provider = ModelProviderKind.LANGCHAIN_FAKE
+    model_name = "forge-langchain-fake-planner-v1"
+
+    def complete(self, request: StructuredModelRequest) -> StructuredModelResult:
+        started = time.monotonic()
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", "{system_prompt}"),
+                (
+                    "human",
+                    "Objective: {objective}\n"
+                    "Workflow: {workflow_name}\n"
+                    "Allowed tools JSON: {allowed_tools}\n"
+                    "Evidence JSON: {evidence}\n"
+                    "Return only the structured plan JSON.",
+                ),
+            ]
+        )
+        fake_provider = DeterministicFakeModelProvider()
+
+        def invoke_fake(_prompt_value: object) -> StructuredModelResult:
+            native_result = fake_provider.complete(
+                request.model_copy(update={"provider": ModelProviderKind.FAKE})
+            )
+            return native_result.model_copy(
+                update={
+                    "provider": self.provider,
+                    "model_name": self.model_name,
+                    "latency_ms": max(1, int((time.monotonic() - started) * 1000)),
+                    "external_request_id": f"langchain-local:{langchain.__version__}",
+                    "live_provider": False,
+                }
+            )
+
+        chain = prompt | RunnableLambda(invoke_fake)
+        result = chain.invoke(
+            {
+                "system_prompt": request.system_prompt,
+                "objective": request.context.objective,
+                "workflow_name": request.context.workflow_name,
+                "allowed_tools": json.dumps(request.context.allowed_tools, sort_keys=True),
+                "evidence": json.dumps(request.context.evidence, sort_keys=True),
+            }
+        )
+        if not isinstance(result, StructuredModelResult):
+            raise ProblemError(
+                500,
+                "langchain_provider_invalid",
+                "LangChain adapter returned an invalid model result.",
+            )
+        return result
+
+
 def model_provider_from_settings(settings: Settings) -> ModelProvider:
     if settings.model_provider == ModelProviderKind.FAKE.value:
         return DeterministicFakeModelProvider()
+    if settings.model_provider == ModelProviderKind.LANGCHAIN_FAKE.value:
+        return LangChainDeterministicModelProvider()
     if settings.model_provider == ModelProviderKind.OPENAI_COMPATIBLE.value:
         return OpenAICompatibleModelProvider(settings=settings)
     raise ProblemError(422, "model_provider_invalid", "Configured model provider is invalid.")

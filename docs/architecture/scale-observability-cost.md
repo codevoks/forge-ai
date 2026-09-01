@@ -51,7 +51,7 @@ Required metrics:
 - evaluation pass rates by suite/model/prompt/tool version (never invented);
 - telemetry drops/redactions and security anomaly counters.
 
-OpenTelemetry is the vendor-neutral instrumentation layer. Langfuse is an adapter for model/agent traces and evaluation datasets, with redaction and tenant access controls. Business execution must not fail when either exporter is unavailable.
+OpenTelemetry is the vendor-neutral instrumentation layer. LangSmith and Langfuse are optional adapters for model/agent traces, evaluation datasets, and experiment comparison, with redaction and tenant access controls. Business execution must not fail when any exporter is unavailable. LangSmith is introduced as an opt-in evaluation/trace integration: default local tests and demos use local reports and an OpenTelemetry-compatible sink, while LangSmith account-backed or self-hosted execution requires explicit approval and separate evidence.
 
 ## SLO and alert design
 
@@ -67,7 +67,7 @@ The default development and demo rate card assigns zero monetary charge to deter
 
 ## Zero-cost operating profile
 
-The mandatory portfolio profile uses local PostgreSQL, local Redis, local API/web/workers, deterministic model and third-party adapters, local MCP servers, and a local OpenTelemetry-compatible sink. It requires no domain, cloud account, billing credentials, paid observability account, or large model download. Optional self-hosted components must be documented with resource bounds and may not become prerequisites for core demonstrations.
+The mandatory portfolio profile uses local PostgreSQL, local Redis, local API/web/workers, deterministic model and third-party adapters, local MCP servers, local evaluation reports, and a local OpenTelemetry-compatible sink. It requires no domain, cloud account, LangSmith account, billing credentials, paid observability account, or large model download. Optional self-hosted components must be documented with resource bounds and may not become prerequisites for core demonstrations.
 
 Default tests, CI, evaluations, and `pnpm demo` must fail closed if a live-provider or cloud-provisioning path is requested without an explicit opt-in flag. Infrastructure-as-code validation and planning may run locally; apply/provision/destroy commands are outside the default demo and require explicit user approval. See [Zero-cost development and demo](zero-cost-demo.md).
 

@@ -83,6 +83,32 @@ LangGraph owns framework-level node routing for the comparison only. Forge remai
 
 The `ForgeLangGraphCheckpointer` mirrors sanitized framework checkpoint metadata into PostgreSQL under `workflow_engine_checkpoints`, mapped to Forge run/task/attempt identifiers. These records are inspectable comparison evidence; they are not an authority source for authorization, scheduling, approval, or external effects. Approval interrupts are represented at the LangGraph tool boundary, but the actual suspension/resume path is still the Phase 6 exact-action approval mechanism.
 
+## Evaluation and framework-boundary path
+
+The offline evaluation harness is a control-plane use case, not a production request-path dependency. It invokes public application services under an authorized actor, records deterministic case verdicts, and keeps framework integrations behind the same non-authoritative seams used by production code.
+
+```mermaid
+flowchart TD
+    UI[Web/API evaluation command] --> AUTH[Actor + workspace authorization]
+    AUTH --> RUNNER[EvaluationService]
+    RUNNER --> SUITE[(evaluation_suites / cases)]
+    RUNNER --> PLAN[PlannerService]
+    PLAN --> LC[LangChain deterministic provider adapter]
+    LC --> FAKE[Deterministic fake model]
+    PLAN --> VALIDATE[Forge schema, DAG, tool, and budget validation]
+    RUNNER --> ENGINE[Worker-driven custom + LangGraph engine cases]
+    ENGINE --> STATE[(runs / tasks / events / checkpoints)]
+    RUNNER --> RESULTS[(case_results / metric_values)]
+    RUNNER --> LS[LangSmith export seam]
+    LS --> LOCAL[(local sanitized artifact)]
+    LS -. explicit opt-in only .-> LIVE[Live LangSmith endpoint]
+
+    classDef guarded stroke-dasharray: 5 5;
+    class LIVE guarded;
+```
+
+LangChain and LangGraph can structure prompts, message flow, and graph execution, but they cannot grant tools, approve effects, change tenant scope, suppress budgets, or mark a run successful. LangSmith export is observational: default mode writes a local sanitized artifact with `live_export=false`; live export requires explicit external-integration opt-in and cannot affect evaluation verdicts.
+
 ## Control plane versus execution plane
 
 - **Control plane:** identity, tenant/workspace administration, workflow/tool registration, policies, credentials references, budgets, approvals.
@@ -100,9 +126,10 @@ They share the initial database and services but have separate modules, permissi
 ## Extension seams
 
 - `QueuePort`: in-process deterministic fake then Redis Streams; Temporal adapter only after evidence.
-- `ModelProvider`: deterministic fake, OpenAI/Bedrock adapters, normalized usage/errors.
+- `ModelProvider`: deterministic fake, OpenAI/Bedrock adapters, LangChain-backed interoperability/composition adapter, normalized usage/errors.
 - `Tool`: local deterministic implementations and MCP proxy share one validated invocation contract.
 - `WorkflowEngine`: custom explicit runtime and LangGraph implementation share domain repositories, policy, tools, approvals, checkpoints, and events.
+- `TelemetryPort`/evaluation export: local reports and OpenTelemetry-compatible sinks by default; LangSmith/Langfuse adapters are opt-in, redacted, and non-authoritative.
 - `PolicyEngine`: code-owned interfaces; start with explicit Python policies, benchmark a policy DSL/OPA only if complexity demands it.
 
 ## Why not microservices now

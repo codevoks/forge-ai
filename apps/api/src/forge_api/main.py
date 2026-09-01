@@ -8,6 +8,7 @@ from forge_api.api.routes import (
     approvals,
     dev_oidc,
     engines,
+    evaluations,
     health,
     identity,
     operations,
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     install_error_handlers(app)
     app.include_router(agents.router)
     app.include_router(engines.router)
+    app.include_router(evaluations.router)
     app.include_router(health.router)
     app.include_router(dev_oidc.router)
     app.include_router(identity.router)

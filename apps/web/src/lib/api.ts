@@ -123,7 +123,7 @@ export type EvidenceItem = {
   source_type: string;
   source_name: string;
   trust_label: string;
-  summary: Record<string, unknown>;
+  summary: Record<string, string | number | boolean>;
   content_hash: string;
   created_at: string;
 };
@@ -228,6 +228,63 @@ export type EngineCheckpoint = {
   state_summary: Record<string, unknown>;
   metadata: Record<string, unknown>;
   created_at: string;
+};
+
+export type EvaluationCaseResult = {
+  id: string;
+  evaluation_run_id: string;
+  case_key: string;
+  category: string;
+  status: string;
+  security_critical: boolean;
+  provider: string;
+  engine_kind: string | null;
+  metrics: Record<string, unknown>;
+  artifacts: Record<string, unknown>;
+  failure_message: string | null;
+  created_at: string;
+};
+
+export type EvaluationMetric = {
+  id: string;
+  evaluation_run_id: string;
+  case_result_id: string | null;
+  metric_name: string;
+  metric_value: number;
+  unit: string;
+  provenance: string;
+  created_at: string;
+};
+
+export type EvaluationExport = {
+  id: string;
+  evaluation_run_id: string;
+  exporter: string;
+  status: string;
+  live_export: boolean;
+  artifact: Record<string, unknown>;
+  error_message: string | null;
+  created_at: string;
+};
+
+export type EvaluationRun = {
+  id: string;
+  tenant_id: string;
+  workspace_id: string;
+  suite_id: string;
+  status: string;
+  provider_path: string;
+  engine_matrix: string[];
+  external_integrations: string;
+  langsmith_export_mode: string;
+  config: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  completed_at: string | null;
+  case_results: EvaluationCaseResult[];
+  metrics: EvaluationMetric[];
+  exports: EvaluationExport[];
 };
 
 async function parseProblem(response: Response): Promise<Error> {
@@ -579,6 +636,32 @@ export async function listEngineCheckpoints(
   }
   const payload = (await response.json()) as { engine_checkpoints: EngineCheckpoint[] };
   return payload.engine_checkpoints;
+}
+
+export async function runOfflineEvaluation(
+  token: string,
+  workspaceId: string
+): Promise<EvaluationRun> {
+  const response = await fetch(`${API_BASE_URL}/v1/evaluations`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `demo-evaluation-${Date.now()}`
+    },
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      provider_path: "native_and_langchain",
+      include_langgraph: true,
+      langsmith_export_mode: "local"
+    })
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { evaluation_run: EvaluationRun };
+  return payload.evaluation_run;
 }
 
 export async function requeueDeadLetter(token: string, deadLetterId: string): Promise<RunSummary> {
