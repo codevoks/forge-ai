@@ -37,6 +37,13 @@ class AdversarialDebuggerCase:
     reason: str
 
 
+@dataclass(frozen=True)
+class AdversarialMCPCase:
+    scenario: str
+    expected_outcome: str
+    reason: str
+
+
 SSRF_DENIAL_CASES = (
     AdversarialUrlCase(
         url="http://example.com/callback",
@@ -122,6 +129,50 @@ EVALUATION_ADVERSARIAL_CASES = (
         case_key="langgraph_step_limit_failure",
         expected_outcome="passed",
         reason="framework orchestration must terminate at Forge-owned budgets",
+    ),
+)
+
+
+MCP_ADVERSARIAL_CASES = (
+    AdversarialMCPCase(
+        scenario="remote_server_ssrf_denied",
+        expected_outcome="denied",
+        reason="HTTP MCP server URLs reuse the Phase 6 NetworkPolicy SSRF denial list",
+    ),
+    AdversarialMCPCase(
+        scenario="remote_transport_zero_cost_denied",
+        expected_outcome="denied",
+        reason="remote MCP servers are an external integration and stay off the default path",
+    ),
+    AdversarialMCPCase(
+        scenario="discovery_quarantine",
+        expected_outcome="denied",
+        reason="a newly discovered MCP tool cannot execute until an admin reviews and enables it",
+    ),
+    AdversarialMCPCase(
+        scenario="malicious_description_contained",
+        expected_outcome="contained",
+        reason="a suspicious description/output is flagged and labeled untrusted, never executed",
+    ),
+    AdversarialMCPCase(
+        scenario="schema_drift_blocks_execution",
+        expected_outcome="denied",
+        reason="a changed remote schema retires the enabled tool version until re-review",
+    ),
+    AdversarialMCPCase(
+        scenario="confused_deputy_no_run_grant",
+        expected_outcome="denied",
+        reason="a globally enabled MCP tool still requires an explicit run-scoped grant to execute",
+    ),
+    AdversarialMCPCase(
+        scenario="cross_tenant_server_hidden",
+        expected_outcome="denied",
+        reason="MCP servers, snapshots, and mappings are RLS-scoped like every other tenant record",
+    ),
+    AdversarialMCPCase(
+        scenario="stdio_command_not_allowlisted",
+        expected_outcome="denied",
+        reason="only a Forge-owned, reviewable module may run as a local subprocess",
     ),
 )
 

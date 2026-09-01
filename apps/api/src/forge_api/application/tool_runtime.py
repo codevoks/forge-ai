@@ -1,10 +1,13 @@
 from typing import Any
 
 from forge_api.api.errors import ProblemError
+from forge_api.application.mcp_tool_adapter import MCPOutcomeUnknownError, MCPToolAdapter
 from forge_api.domain.approvals import ApprovalPolicy, ApprovalRequiredError
 from forge_api.domain.tools import (
     InvocationStatus,
+    ToolContract,
     ToolRisk,
+    dynamic_contract_from_registry_row,
     registered_tools,
     tool_by_name_version,
 )
@@ -65,7 +68,9 @@ class DeterministicToolAdapter:
         tool_name: str,
         arguments: dict[str, Any],
         idempotency_key: str,
+        worker_id: str = "",
     ) -> dict[str, Any]:
+        _ = worker_id
         if tool_name == "deployment_history.lookup":
             return {
                 "service": arguments["service"],
@@ -119,6 +124,7 @@ class ToolRuntime:
         self.policy = ToolPolicy()
         self.approvals = ToolApprovalPolicy()
         self.adapter = DeterministicToolAdapter()
+        self.mcp_adapter = MCPToolAdapter(database=database)
 
     def invoke_for_claim(self, claim: dict[str, Any]) -> dict[str, Any]:
         task_input = claim.get("input", {})
@@ -130,11 +136,16 @@ class ToolRuntime:
         if not isinstance(arguments, dict):
             raise ProblemError(422, "tool_step_invalid", "Tool arguments must be an object.")
 
-        tool_definition = tool_by_name_version(tool_name, tool_version)
+        tool_definition: ToolContract | None = tool_by_name_version(tool_name, tool_version)
         if tool_definition is None:
-            raise ProblemError(404, "tool_not_registered", "Tool is not code-registered.")
-        validated_input = tool_definition.validate_input(arguments)
-        canonical_arguments = validated_input.model_dump()
+            with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
+                registry_row = ToolRegistryRepository(conn).try_resolve(
+                    name=tool_name, version=tool_version
+                )
+            if registry_row is None or registry_row["origin"] != "mcp":
+                raise ProblemError(404, "tool_not_registered", "Tool is not code-registered.")
+            tool_definition = dynamic_contract_from_registry_row(registry_row)
+        canonical_arguments = tool_definition.validate_input(arguments)
 
         approval_required_id: str | None = None
         with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
@@ -149,11 +160,21 @@ class ToolRuntime:
             )
             self.policy.authorize(grant=grant, tool_risk=tool_definition.risk)
             invocation_repo = ToolInvocationRepository(conn)
+            mcp_server_id = None
+            mcp_provenance = None
+            if registry_tool["origin"] == "mcp":
+                mcp_server_id = registry_tool["mcp_server_id"]
+                mcp_provenance = {
+                    "mcp_server_id": registry_tool["mcp_server_id"],
+                    "remote_tool_name": registry_tool["mcp_remote_tool_name"],
+                }
             invocation = invocation_repo.begin_intent(
                 claim=claim,
                 tool=registry_tool,
                 risk=tool_definition.risk,
                 arguments=canonical_arguments,
+                mcp_server_id=mcp_server_id,
+                mcp_provenance=mcp_provenance,
             )
             if invocation["status"] == InvocationStatus.SUCCEEDED.value:
                 return {
@@ -185,13 +206,15 @@ class ToolRuntime:
         if approval_required_id is not None:
             raise ApprovalRequiredError(approval_required_id)
 
+        adapter = self.mcp_adapter if registry_tool["origin"] == "mcp" else self.adapter
         try:
-            output = self.adapter.invoke(
+            output = adapter.invoke(
                 tool_name=tool_name,
                 arguments=canonical_arguments,
                 idempotency_key=str(invocation["idempotency_key"]),
+                worker_id=str(claim["worker_id"]),
             )
-            validated_output = tool_definition.validate_output(output).model_dump()
+            validated_output = tool_definition.validate_output(output)
         except ProblemError as exc:
             with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
                 ToolInvocationRepository(conn).mark_failed(
@@ -201,7 +224,7 @@ class ToolRuntime:
                     error_message=exc.message,
                 )
             raise
-        except OutcomeUnknownToolError as exc:
+        except (OutcomeUnknownToolError, MCPOutcomeUnknownError) as exc:
             with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
                 ToolInvocationRepository(conn).mark_failed(
                     invocation_id=str(invocation["id"]),

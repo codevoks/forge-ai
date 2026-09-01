@@ -59,8 +59,9 @@ class ToolRegistryRepository:
                     """
                     insert into tool_versions
                       (id, tenant_id, workspace_id, tool_definition_id, name, version, status, risk,
-                       input_schema, output_schema, timeout_ms, retryable, idempotency_required)
-                    values (%s, null, null, %s, %s, %s, 'active', %s, %s, %s, %s, %s, true)
+                       input_schema, output_schema, timeout_ms, retryable, idempotency_required,
+                       trust_label)
+                    values (%s, null, null, %s, %s, %s, 'active', %s, %s, %s, %s, %s, true, %s)
                     """,
                     (
                         str(uuid7()),
@@ -72,6 +73,7 @@ class ToolRegistryRepository:
                         json.dumps(tool.output_schema),
                         tool.timeout_ms,
                         tool.retryable,
+                        tool.trust_label.value,
                     ),
                 )
                 continue
@@ -83,7 +85,8 @@ class ToolRegistryRepository:
                     input_schema = %s,
                     output_schema = %s,
                     timeout_ms = %s,
-                    retryable = %s
+                    retryable = %s,
+                    trust_label = %s
                 where id = %s
                 """,
                 (
@@ -92,6 +95,7 @@ class ToolRegistryRepository:
                     json.dumps(tool.output_schema),
                     tool.timeout_ms,
                     tool.retryable,
+                    tool.trust_label.value,
                     version["id"],
                 ),
             )
@@ -100,11 +104,13 @@ class ToolRegistryRepository:
         _ = actor_id
         rows = self.conn.execute(
             """
-            select tv.id, tv.name, tv.version, td.display_name, td.description,
+            select tv.id, tv.name, tv.version, td.display_name, td.description, td.origin,
                    tv.status, tv.risk, tv.input_schema, tv.output_schema,
-                   tv.timeout_ms, tv.retryable
+                   tv.timeout_ms, tv.retryable, tv.trust_label,
+                   mm.mcp_server_id, mm.remote_tool_name
             from tool_versions tv
             join tool_definitions td on td.id = tv.tool_definition_id
+            left join mcp_tool_mappings mm on mm.mapped_tool_version_id = tv.id
             where tv.status = 'active'
             order by tv.name, tv.version
             """
@@ -114,11 +120,13 @@ class ToolRegistryRepository:
     def resolve(self, *, name: str, version: int) -> dict[str, Any]:
         row = self.conn.execute(
             """
-            select tv.id, tv.name, tv.version, td.display_name, td.description,
+            select tv.id, tv.name, tv.version, td.display_name, td.description, td.origin,
                    tv.status, tv.risk, tv.input_schema, tv.output_schema,
-                   tv.timeout_ms, tv.retryable
+                   tv.timeout_ms, tv.retryable, tv.trust_label,
+                   mm.mcp_server_id, mm.remote_tool_name
             from tool_versions tv
             join tool_definitions td on td.id = tv.tool_definition_id
+            left join mcp_tool_mappings mm on mm.mapped_tool_version_id = tv.id
             where tv.name = %s and tv.version = %s and tv.status = 'active'
             """,
             (name, version),
@@ -127,6 +135,111 @@ class ToolRegistryRepository:
             raise ProblemError(404, "tool_not_found", "The requested tool version was not found.")
         return self._summary(row)
 
+    def try_resolve(self, *, name: str, version: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            select tv.id, tv.name, tv.version, td.display_name, td.description, td.origin,
+                   tv.status, tv.risk, tv.input_schema, tv.output_schema,
+                   tv.timeout_ms, tv.retryable, tv.trust_label,
+                   mm.mcp_server_id, mm.remote_tool_name
+            from tool_versions tv
+            join tool_definitions td on td.id = tv.tool_definition_id
+            left join mcp_tool_mappings mm on mm.mapped_tool_version_id = tv.id
+            where tv.name = %s and tv.version = %s and tv.status = 'active'
+            """,
+            (name, version),
+        ).fetchone()
+        return self._summary(row) if row is not None else None
+
+    def upsert_mcp_tool_definition(
+        self,
+        *,
+        tenant_id: str,
+        workspace_id: str,
+        name: str,
+        display_name: str,
+        description: str,
+    ) -> str:
+        row = self.conn.execute(
+            """
+            select id from tool_definitions
+            where tenant_id = %s and workspace_id = %s and name = %s
+            """,
+            (tenant_id, workspace_id, name),
+        ).fetchone()
+        if row is None:
+            row = self.conn.execute(
+                """
+                insert into tool_definitions
+                  (id, tenant_id, workspace_id, name, display_name, description, origin)
+                values (%s, %s, %s, %s, %s, %s, 'mcp')
+                returning id
+                """,
+                (str(uuid7()), tenant_id, workspace_id, name, display_name, description),
+            ).fetchone()
+        else:
+            self.conn.execute(
+                "update tool_definitions set display_name = %s, description = %s where id = %s",
+                (display_name, description, row["id"]),
+            )
+        assert row is not None
+        return str(row["id"])
+
+    def next_version_number(self, *, tool_definition_id: str) -> int:
+        row = self.conn.execute(
+            "select coalesce(max(version), 0) + 1 as next_version from tool_versions "
+            "where tool_definition_id = %s",
+            (tool_definition_id,),
+        ).fetchone()
+        assert row is not None
+        return int(row["next_version"])
+
+    def insert_mcp_tool_version(
+        self,
+        *,
+        tenant_id: str,
+        workspace_id: str,
+        tool_definition_id: str,
+        name: str,
+        version: int,
+        risk: str,
+        input_schema: dict[str, Any],
+        output_schema: dict[str, Any],
+        timeout_ms: int,
+        retryable: bool,
+    ) -> str:
+        row = self.conn.execute(
+            """
+            insert into tool_versions
+              (id, tenant_id, workspace_id, tool_definition_id, name, version, status, risk,
+               input_schema, output_schema, timeout_ms, retryable, idempotency_required,
+               trust_label)
+            values (%s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, true,
+                    'untrusted_tool_output')
+            returning id
+            """,
+            (
+                str(uuid7()),
+                tenant_id,
+                workspace_id,
+                tool_definition_id,
+                name,
+                version,
+                risk,
+                json.dumps(input_schema),
+                json.dumps(output_schema),
+                timeout_ms,
+                retryable,
+            ),
+        ).fetchone()
+        assert row is not None
+        return str(row["id"])
+
+    def retire(self, *, tool_version_id: str) -> None:
+        self.conn.execute(
+            "update tool_versions set status = 'retired' where id = %s", (tool_version_id,)
+        )
+
     def _summary(self, row: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": str(row["id"]),
@@ -134,12 +247,20 @@ class ToolRegistryRepository:
             "version": int(row["version"]),
             "display_name": str(row["display_name"]),
             "description": str(row["description"]),
+            "origin": str(row["origin"]),
             "status": str(row["status"]),
             "risk": str(row["risk"]),
             "input_schema": row["input_schema"],
             "output_schema": row["output_schema"],
             "timeout_ms": int(row["timeout_ms"]),
             "retryable": bool(row["retryable"]),
+            "trust_label": str(row["trust_label"]),
+            "mcp_server_id": str(row["mcp_server_id"])
+            if row.get("mcp_server_id") is not None
+            else None,
+            "mcp_remote_tool_name": str(row["remote_tool_name"])
+            if row.get("remote_tool_name") is not None
+            else None,
         }
 
 
@@ -226,6 +347,8 @@ class ToolInvocationRepository:
         tool: dict[str, Any],
         risk: ToolRisk,
         arguments: dict[str, Any],
+        mcp_server_id: str | None = None,
+        mcp_provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         computed_hash = action_hash(str(tool["name"]), int(tool["version"]), arguments)
         idempotency_key = (
@@ -236,9 +359,10 @@ class ToolInvocationRepository:
             """
             insert into tool_invocations
               (id, tenant_id, workspace_id, run_id, task_id, attempt_id, tool_version_id,
-               tool_name, tool_version, risk, action_hash, idempotency_key, status, input)
+               tool_name, tool_version, risk, action_hash, idempotency_key, status, input,
+               mcp_server_id, mcp_provenance)
             values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    'intent_recorded', %s)
+                    'intent_recorded', %s, %s, %s)
             on conflict (tenant_id, workspace_id, run_id, task_id, tool_version_id, action_hash)
             do nothing
             returning *
@@ -257,6 +381,8 @@ class ToolInvocationRepository:
                 computed_hash,
                 idempotency_key,
                 json.dumps(arguments),
+                mcp_server_id,
+                json.dumps(mcp_provenance) if mcp_provenance is not None else None,
             ),
         ).fetchone()
         if inserted is not None:
@@ -448,6 +574,10 @@ class ToolInvocationRepository:
             "error_message": str(row["error_message"])
             if row["error_message"] is not None
             else None,
+            "mcp_server_id": str(row["mcp_server_id"])
+            if row.get("mcp_server_id") is not None
+            else None,
+            "mcp_provenance": row.get("mcp_provenance"),
             "provider_operation_id": str(row["provider_operation_id"])
             if row["provider_operation_id"] is not None
             else None,

@@ -1,10 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from forge_api.api.dependencies import get_actor, get_database, require_idempotency_key
-from forge_api.api.errors import ProblemError
+from forge_api.api.dependencies import (
+    get_actor,
+    get_database,
+    require_idempotency_key,
+    require_if_match,
+)
 from forge_api.application.approval_service import ApprovalService
 from forge_api.domain.approvals import ApprovalDecisionValue
 from forge_api.domain.identity import ActorContext
@@ -15,18 +19,6 @@ router = APIRouter(prefix="/v1/approvals", tags=["approvals"])
 
 class ApprovalDecisionRequest(BaseModel):
     reason: str = Field(min_length=2, max_length=500)
-
-
-def require_if_match(if_match: Annotated[str | None, Header()] = None) -> int:
-    if not if_match:
-        raise ProblemError(428, "if_match_required", "If-Match version header is required.")
-    try:
-        version = int(if_match.strip().strip('"'))
-    except ValueError as exc:
-        raise ProblemError(400, "if_match_invalid", "If-Match must be a resource version.") from exc
-    if version < 1:
-        raise ProblemError(400, "if_match_invalid", "If-Match must be a positive version.")
-    return version
 
 
 @router.get("")

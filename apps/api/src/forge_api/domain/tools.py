@@ -2,11 +2,12 @@ import hashlib
 import json
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from forge_api.api.errors import ProblemError
+from forge_api.domain import json_schema
 
 MAX_TOOL_INPUT_BYTES = 4096
 MAX_TOOL_OUTPUT_BYTES = 8192
@@ -72,6 +73,39 @@ class SimulatedTicketOutput(StrictModel):
     severity: str
 
 
+class ToolContract(Protocol):
+    """The shape `ToolRuntime` needs from any tool origin (code-registered or MCP-mapped).
+
+    Every member is a read-only property so both the code-registered `ToolDefinition`
+    and the runtime-built `DynamicToolContract` (frozen dataclasses) satisfy it.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def version(self) -> int: ...
+
+    @property
+    def risk(self) -> ToolRisk: ...
+
+    @property
+    def trust_label(self) -> TrustLabel: ...
+
+    @property
+    def origin(self) -> str: ...
+
+    @property
+    def input_schema(self) -> dict[str, Any]: ...
+
+    @property
+    def output_schema(self) -> dict[str, Any]: ...
+
+    def validate_input(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    def validate_output(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     name: str
@@ -84,6 +118,7 @@ class ToolDefinition:
     timeout_ms: int
     retryable: bool
     trust_label: TrustLabel
+    origin: str = "code"
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -93,10 +128,10 @@ class ToolDefinition:
     def output_schema(self) -> dict[str, Any]:
         return self.output_model.model_json_schema()
 
-    def validate_input(self, payload: dict[str, Any]) -> StrictModel:
+    def validate_input(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             _assert_json_size(payload, max_bytes=MAX_TOOL_INPUT_BYTES, label="tool input")
-            return self.input_model.model_validate(payload)
+            return self.input_model.model_validate(payload).model_dump()
         except ValidationError as exc:
             raise ProblemError(
                 422,
@@ -104,16 +139,89 @@ class ToolDefinition:
                 "Tool input did not match the registered schema.",
             ) from exc
 
-    def validate_output(self, payload: dict[str, Any]) -> StrictModel:
+    def validate_output(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             _assert_json_size(payload, max_bytes=MAX_TOOL_OUTPUT_BYTES, label="tool output")
-            return self.output_model.model_validate(payload)
+            return self.output_model.model_validate(payload).model_dump()
         except ValidationError as exc:
             raise ProblemError(
                 502,
                 "tool_output_invalid",
                 "Tool output did not match the registered schema.",
             ) from exc
+
+
+@dataclass(frozen=True)
+class DynamicToolContract:
+    """A tool contract built at runtime from a stored JSON Schema (MCP-mapped tools).
+
+    Unlike code tools, an MCP tool's schema is only known after discovery, so it
+    cannot be a compile-time Pydantic model. Validation instead uses the bounded
+    `forge_api.domain.json_schema` dialect against the exact schema an administrator
+    reviewed and pinned at enable time.
+    """
+
+    name: str
+    version: int
+    risk: ToolRisk
+    trust_label: TrustLabel
+    input_json_schema: dict[str, Any]
+    output_json_schema: dict[str, Any]
+    origin: str = "mcp"
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return self.input_json_schema
+
+    @property
+    def output_schema(self) -> dict[str, Any]:
+        return self.output_json_schema
+
+    def validate_input(self, payload: dict[str, Any]) -> dict[str, Any]:
+        _assert_json_size(payload, max_bytes=MAX_TOOL_INPUT_BYTES, label="tool input")
+        errors = json_schema.validate_payload(payload, self.input_json_schema)
+        if errors:
+            raise ProblemError(
+                422,
+                "tool_input_invalid",
+                "Tool input did not match the registered schema.",
+            )
+        return payload
+
+    def validate_output(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ProblemError(502, "tool_output_invalid", "Tool output must be an object.")
+        _assert_json_size(payload, max_bytes=MAX_TOOL_OUTPUT_BYTES, label="tool output")
+        errors = json_schema.validate_payload(payload, self.output_json_schema)
+        if errors:
+            raise ProblemError(
+                502,
+                "tool_output_invalid",
+                "Tool output did not match the registered schema.",
+            )
+        return payload
+
+
+def dynamic_contract_from_registry_row(row: dict[str, Any]) -> DynamicToolContract:
+    """Build a `DynamicToolContract` from a `tool_versions`/`tool_definitions` join row.
+
+    Used for MCP-mapped tools, which have no compile-time Pydantic model: the exact
+    schema an administrator reviewed and pinned at enable time is stored as JSON on
+    the immutable `tool_versions` row and read back here.
+    """
+    input_schema = row["input_schema"]
+    output_schema = row["output_schema"]
+    if not isinstance(input_schema, dict) or not isinstance(output_schema, dict):
+        raise ProblemError(500, "tool_schema_invalid", "Stored tool schema is invalid.")
+    return DynamicToolContract(
+        name=str(row["name"]),
+        version=int(row["version"]),
+        risk=ToolRisk(str(row["risk"])),
+        trust_label=TrustLabel(str(row["trust_label"])),
+        input_json_schema=input_schema,
+        output_json_schema=output_schema,
+        origin=str(row["origin"]),
+    )
 
 
 def _assert_json_size(payload: dict[str, Any], *, max_bytes: int, label: str) -> None:

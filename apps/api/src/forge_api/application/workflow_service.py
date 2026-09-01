@@ -2,7 +2,11 @@ from typing import Any
 
 from forge_api.api.errors import ProblemError
 from forge_api.domain.identity import ActorContext, Capability
-from forge_api.domain.tools import tool_by_name_version
+from forge_api.domain.tools import (
+    ToolContract,
+    dynamic_contract_from_registry_row,
+    tool_by_name_version,
+)
 from forge_api.domain.workflow import (
     DAGValidator,
     WorkflowEdgeDefinition,
@@ -89,16 +93,25 @@ class WorkflowService:
                     continue
                 tool_name, tool_version = tool_reference_from_step(step.input)
                 registry_tool = registry.resolve(name=tool_name, version=tool_version)
-                local_tool = tool_by_name_version(tool_name, tool_version)
+                local_tool: ToolContract | None = tool_by_name_version(tool_name, tool_version)
                 if local_tool is None:
-                    raise ProblemError(
-                        422,
-                        "tool_not_registered",
-                        "Tool steps must reference a code-registered tool.",
-                    )
+                    if registry_tool["origin"] != "mcp":
+                        raise ProblemError(
+                            422,
+                            "tool_not_registered",
+                            "Tool steps must reference a code-registered or enabled MCP tool.",
+                        )
+                    local_tool = dynamic_contract_from_registry_row(registry_tool)
                 local_tool.validate_input(dict(step.input["arguments"]))
-                if registry_tool["risk"] == "simulated_effect" and not step.input["arguments"].get(
-                    "dry_run"
+                # The dry_run convention belongs to code-registered simulated-effect tools,
+                # whose schema always declares it (see SimulatedTicketInput). MCP-mapped
+                # tools have an admin-reviewed but otherwise arbitrary remote schema that may
+                # not accept an extra property at all; their safety boundary is the exact-
+                # action approval gate below, which is unconditional regardless of origin.
+                if (
+                    registry_tool["origin"] == "code"
+                    and registry_tool["risk"] == "simulated_effect"
+                    and not step.input["arguments"].get("dry_run")
                 ):
                     raise ProblemError(
                         422,

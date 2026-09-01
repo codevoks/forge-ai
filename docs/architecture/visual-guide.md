@@ -357,3 +357,34 @@ flowchart TD
     LGCHECK -. never authorizes .-> POLICY
     TOOL --> LEDGER
 ```
+
+## MCP discovery quarantine and enablement boundary
+
+Phase 11 adds MCP as a discovery/invocation source, never a second authorization system. Everything a remote or local MCP server proposes is quarantined until an administrator explicitly reviews it; only then does it become an ordinary tool the existing typed-tool runtime (see the diagram above) already knows how to grant, approve, and evidence.
+
+```mermaid
+flowchart TD
+    LOCAL[Local stdio server\nallowlisted Forge module only]
+    REMOTE[Remote HTTP server\nSSRF-checked https URL]
+    GATE{external_integrations\nenabled?}
+    DENY_REMOTE[Deny: mcp_remote_transport_disabled]
+    CLIENT[MCPClientPort\nreal JSON-RPC initialize/tools-list/tools-call]
+    SNAPSHOT[mcp_capability_snapshots\nbounded schema + capability hash]
+    MAPPING{mcp_tool_mappings.status}
+    DISCOVERED[discovered\nquarantined, not resolvable]
+    REVIEW[Admin reviews exact schema_hash\nchooses forge_tool_name + risk]
+    ENABLED[enabled\ntool_definitions/tool_versions\norigin=mcp, trust_label=untrusted_tool_output]
+    DRIFTED[drifted\nold version retired]
+    REMOVED[removed\nold version retired]
+    RUNTIME[Existing ToolRuntime\ngrant + policy + approval + evidence]
+
+    LOCAL --> CLIENT
+    REMOTE --> GATE
+    GATE -- no --> DENY_REMOTE
+    GATE -- yes --> CLIENT
+    CLIENT --> SNAPSHOT --> MAPPING
+    MAPPING -- new tool --> DISCOVERED --> REVIEW --> ENABLED
+    MAPPING -- schema changed, was enabled --> DRIFTED --> REVIEW
+    MAPPING -- missing from snapshot --> REMOVED
+    ENABLED -->|identical to a code tool| RUNTIME
+```

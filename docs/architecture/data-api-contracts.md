@@ -14,6 +14,7 @@ The following are conceptual tables; migrations are introduced in the owning pha
 | Engine comparison | workflow_engine_checkpoints | sanitized framework checkpoint metadata mapped to run/task/attempt; not authoritative |
 | Evaluation | evaluation_suites, evaluation_cases, evaluation_runs, evaluation_case_results, metric_values, evaluation_exports | tenant-scoped deterministic suites, case verdicts, normalized metrics, and sanitized optional export artifacts |
 | Debugging/replay | debugger_projection_verifications, debugger_replay_sessions, debugger_replay_artifacts, debugger_trace_exports | tenant-scoped operator artifacts; simulation replay by default; live trace export opt-in |
+| MCP interoperability | mcp_servers, mcp_capability_snapshots, mcp_tool_mappings | tenant/workspace scoped; discovery is quarantined until admin-enabled; enabled mappings link to ordinary origin='mcp' tool_definitions/tool_versions rows |
 | Reliability | idempotency_records, inbox_messages, outbox_messages, dead_letters, leases | unique logical keys; retry schedule; claim fencing |
 | Audit | execution_events, security_audit_events | append-only application permissions; event schema version, cursor ordering, trace metadata, sanitized payload/diff metadata |
 
@@ -109,6 +110,15 @@ GET /v1/runs/{run_id}/debugger/events
 POST /v1/runs/{run_id}/debugger/projection-verifications
 POST /v1/runs/{run_id}/debugger/replays
 POST /v1/runs/{run_id}/debugger/trace-exports
+GET /v1/mcp/servers
+POST /v1/mcp/servers
+GET /v1/mcp/servers/{server_id}
+POST /v1/mcp/servers/{server_id}:test
+POST /v1/mcp/servers/{server_id}:discover
+POST /v1/mcp/servers/{server_id}:disable
+GET /v1/mcp/servers/{server_id}/mappings
+POST /v1/mcp/servers/{server_id}/mappings/{mapping_id}:enable
+POST /v1/mcp/servers/{server_id}/mappings/{mapping_id}:disable
 ```
 
 `POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
@@ -193,6 +203,16 @@ Implemented debugger/replay tables currently include:
 
 Debugger mutation endpoints require `Idempotency-Key` and `run.recover`. Projection verification folds known event schemas and compares them with current `runs`/`tasks`; a mismatch is reported as an operator finding, not auto-repaired. Replay simulation reads evidence and records a replay artifact with tripwires. It does not call model providers, tool adapters, approval consumption, queues, or state transition code. Effect replay is intentionally disabled and returns a blocked replay session. Trace export creates a sanitized local artifact linking events, model calls, tool invocations, and LangGraph checkpoints; LangSmith/live telemetry export remains explicit opt-in and non-authoritative.
 
+Implemented MCP interoperability tables currently include:
+
+| Table | Purpose | Important constraints |
+|---|---|---|
+| `mcp_servers` | Admin-managed MCP connection | Tenant/workspace scoped; transport `stdio` or `http`; stdio commands are allowlist-validated, http URLs are SSRF-validated; secrets are references only |
+| `mcp_capability_snapshots` | Point-in-time discovery result | Immutable per discovery call; stores the bounded, normalized tool list and a capability hash used for drift detection |
+| `mcp_tool_mappings` | Discovery-to-execution review state | One row per `(server, remote_tool_name)`; `status` moves discovered → enabled/disabled/drifted/removed; only `enabled` mappings link to a `tool_definitions`/`tool_versions` row |
+
+`POST /v1/mcp/servers` validates the connection (allowlisted stdio module, or SSRF-checked `https` URL), enforces the zero-cost transport gate (`http` requires `FORGE_EXTERNAL_INTEGRATIONS=enabled`), and requires `mcp.admin` plus `Idempotency-Key`. `POST /v1/mcp/servers/{id}:discover` performs a real MCP `tools/list` call, writes a capability snapshot, and upserts `mcp_tool_mappings` as `discovered`; a schema change on an already-`enabled` mapping retires its `tool_versions` row and flips it to `drifted`, and a tool missing from the new snapshot is marked `removed`. `POST /v1/mcp/servers/{id}/mappings/{mapping_id}:enable` requires `Idempotency-Key`, `If-Match`, and the exact currently-reviewed `schema_hash`; it creates or bumps a `tool_definitions`/`tool_versions` row with `origin='mcp'` and `trust_label='untrusted_tool_output'`, which then flows through the unchanged `run_tool_grants`/`tool_invocations`/`evidence_items`/approval machinery exactly like a code-registered tool. Disabling a mapping or server retires the linked `tool_versions` row; no API executes an MCP tool directly — execution only ever happens inside a run-scoped task that references the exact enabled tool name and version, identical to the Phase 4 typed tool runtime contract.
+
 ## Asynchronous envelope
 
 Every outbox/queue message has `message_id`, `schema_version`, `type`, `occurred_at`, `tenant_id`, `workspace_id`, `aggregate_type`, `aggregate_id`, `correlation_id`, `causation_id`, `trace_context`, and a minimal payload of durable IDs. Consumers reject unknown major schema versions, validate scope against database state, and deduplicate on `message_id` plus handler name.
@@ -219,6 +239,7 @@ Queues are partitioned/routed by workload and risk (`control`, `model`, `tool_re
 - `ProjectionVerifier.verify(run) -> verification result`
 - `ReplayService.create(run, mode) -> simulation | blocked`
 - `TraceExportAdapter.export(run, evidence) -> local_artifact | blocked`
+- `MCPClientPort.health_check/discover/invoke(connection) -> MCPHealthResult | MCPDiscoveryResult | MCPInvocationResult`
 - `TelemetryPort` and `Clock`/`IdGenerator` for deterministic tests.
 
 Provider errors are normalized into `invalid_request`, `auth`, `rate_limited`, `transient`, `timeout`, `policy_blocked`, and `unknown`; only explicitly retryable classes enter backoff.
