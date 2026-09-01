@@ -51,6 +51,7 @@ class RetryPolicy:
             "agent_task_invalid",
             "invalid_decision_limit_reached",
             "model_budget_exhausted",
+            "multi_agent_synthesis_no_usable_results",
             "no_progress_limit_reached",
             "replan_not_available",
             "step_limit_reached",

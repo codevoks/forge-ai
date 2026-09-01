@@ -169,16 +169,21 @@ class AgentRepository:
         ).fetchone()
         return int(row["count"] if row else 0)
 
-    def recent_evidence(self, *, run_id: str, limit: int) -> list[dict[str, Any]]:
+    def recent_evidence(self, *, run_id: str, task_id: str, limit: int) -> list[dict[str, Any]]:
+        # Scoped to this task, not the whole run: isolated parallel specialists
+        # (Phase 12) must never see evidence a sibling specialist collected in
+        # the same run. A single-agent run has exactly one agent task, so this
+        # is behavior-preserving there while closing the cross-specialist
+        # evidence leak for multi-agent runs.
         rows = self.conn.execute(
             """
             select id, source_name, trust_label, content_hash, summary
             from evidence_items
-            where run_id = %s
+            where run_id = %s and task_id = %s
             order by created_at desc
             limit %s
             """,
-            (run_id, limit),
+            (run_id, task_id, limit),
         ).fetchall()
         return [
             {

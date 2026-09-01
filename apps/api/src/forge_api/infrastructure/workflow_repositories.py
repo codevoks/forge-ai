@@ -347,6 +347,9 @@ class RunRepository:
         engine_kind: str = "custom",
         engine_version: str = "custom-agent-v1",
         engine_metadata: dict[str, Any] | None = None,
+        strategy_kind: str = "single_agentic",
+        strategy_version: str = "single-agentic-v1",
+        strategy_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         objective_id = str(uuid7())
         run_id = str(uuid7())
@@ -362,11 +365,13 @@ class RunRepository:
             """
             insert into runs
               (id, tenant_id, workspace_id, objective_id, workflow_version_id, status,
-               engine_kind, engine_version, engine_metadata, created_by)
-            values (%s, %s, %s, %s, %s, 'created', %s, %s, %s, %s)
+               engine_kind, engine_version, engine_metadata,
+               strategy_kind, strategy_version, strategy_metadata, created_by)
+            values (%s, %s, %s, %s, %s, 'created', %s, %s, %s, %s, %s, %s, %s)
             returning id, tenant_id, workspace_id, objective_id, workflow_version_id,
-                      status, engine_kind, engine_version, engine_metadata, version, created_by,
-                      created_at, started_at, completed_at
+                      status, engine_kind, engine_version, engine_metadata,
+                      strategy_kind, strategy_version, strategy_metadata,
+                      version, created_by, created_at, started_at, completed_at
             """,
             (
                 run_id,
@@ -377,6 +382,9 @@ class RunRepository:
                 engine_kind,
                 engine_version,
                 json.dumps(engine_metadata or {}),
+                strategy_kind,
+                strategy_version,
+                json.dumps(strategy_metadata or {}),
                 actor_id,
             ),
         ).fetchone()
@@ -385,12 +393,16 @@ class RunRepository:
         for step in workflow_version["steps"]:
             task_id = str(uuid7())
             task_ids[str(step["key"])] = task_id
+            step_input = step.get("input", {})
+            agent_role = (
+                step_input.get("agent_role") if isinstance(step_input, dict) else None
+            )
             self.conn.execute(
                 """
                 insert into tasks
                   (id, tenant_id, workspace_id, run_id, workflow_version_id, step_key,
-                   name, kind, input, status)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending')
+                   name, kind, input, status, agent_role)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s)
                 """,
                 (
                     task_id,
@@ -401,7 +413,8 @@ class RunRepository:
                     step["key"],
                     step["name"],
                     step["kind"],
-                    json.dumps(step.get("input", {})),
+                    json.dumps(step_input),
+                    str(agent_role) if agent_role else None,
                 ),
             )
         for edge in workflow_version["edges"]:
@@ -490,6 +503,7 @@ class RunRepository:
             """
             select r.id, r.tenant_id, r.workspace_id, r.objective_id, r.workflow_version_id,
                    r.status, r.engine_kind, r.engine_version, r.engine_metadata,
+                   r.strategy_kind, r.strategy_version, r.strategy_metadata,
                    r.version, r.created_by, r.created_at, r.started_at, r.completed_at,
                    o.objective, v.name as workflow_name
             from runs r
@@ -509,7 +523,8 @@ class RunRepository:
         rows = self.conn.execute(
             """
             select id, tenant_id, workspace_id, run_id, workflow_version_id, step_key,
-                   name, kind, input, status, result, version, started_at, completed_at
+                   name, kind, input, status, result, version, started_at, completed_at,
+                   agent_role
             from tasks
             where run_id = %s
             order by step_key
@@ -963,6 +978,9 @@ class RunRepository:
             "engine_kind": str(row.get("engine_kind", "custom")),
             "engine_version": str(row.get("engine_version", "custom-agent-v1")),
             "engine_metadata": row.get("engine_metadata", {}),
+            "strategy_kind": str(row.get("strategy_kind", "single_agentic")),
+            "strategy_version": str(row.get("strategy_version", "single-agentic-v1")),
+            "strategy_metadata": row.get("strategy_metadata", {}),
             "version": int(row["version"]),
             "created_by": str(row["created_by"]),
             "created_at": row["created_at"].isoformat(),
@@ -983,6 +1001,7 @@ class RunRepository:
             "input": row["input"],
             "status": str(row["status"]),
             "result": row["result"],
+            "agent_role": row.get("agent_role"),
             "version": int(row["version"]),
             "started_at": row["started_at"].isoformat() if row["started_at"] else None,
             "completed_at": row["completed_at"].isoformat() if row["completed_at"] else None,

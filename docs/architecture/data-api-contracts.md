@@ -15,6 +15,7 @@ The following are conceptual tables; migrations are introduced in the owning pha
 | Evaluation | evaluation_suites, evaluation_cases, evaluation_runs, evaluation_case_results, metric_values, evaluation_exports | tenant-scoped deterministic suites, case verdicts, normalized metrics, and sanitized optional export artifacts |
 | Debugging/replay | debugger_projection_verifications, debugger_replay_sessions, debugger_replay_artifacts, debugger_trace_exports | tenant-scoped operator artifacts; simulation replay by default; live trace export opt-in |
 | MCP interoperability | mcp_servers, mcp_capability_snapshots, mcp_tool_mappings | tenant/workspace scoped; discovery is quarantined until admin-enabled; enabled mappings link to ordinary origin='mcp' tool_definitions/tool_versions rows |
+| Multi-agent patterns | strategy_comparisons | tenant/workspace scoped; correlates two already-durable run IDs (single_agentic, multi_agent_parallel) plus computed metrics; no parallel task/agent state store |
 | Reliability | idempotency_records, inbox_messages, outbox_messages, dead_letters, leases | unique logical keys; retry schedule; claim fencing |
 | Audit | execution_events, security_audit_events | append-only application permissions; event schema version, cursor ordering, trace metadata, sanitized payload/diff metadata |
 
@@ -119,6 +120,9 @@ POST /v1/mcp/servers/{server_id}:disable
 GET /v1/mcp/servers/{server_id}/mappings
 POST /v1/mcp/servers/{server_id}/mappings/{mapping_id}:enable
 POST /v1/mcp/servers/{server_id}/mappings/{mapping_id}:disable
+POST /v1/multi-agent/comparisons
+GET /v1/multi-agent/comparisons
+GET /v1/multi-agent/comparisons/{comparison_id}
 ```
 
 `POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
@@ -177,6 +181,8 @@ Implemented workflow-engine comparison fields and tables currently include:
 
 `POST /v1/runs` accepts optional `engine_kind` with values `custom` or `langgraph`; omitting it preserves the custom engine. `GET /v1/runs/{run_id}` returns engine metadata. `GET /v1/runs/{run_id}/engine-checkpoints` returns read-only, tenant-scoped checkpoint metadata for authorized workspace members. The endpoint exposes framework comparison evidence only; no API executes arbitrary graph nodes or resumes a run from client-provided framework state.
 
+`POST /v1/runs` also accepts optional `strategy_kind` with values `single_agentic` (default) or `multi_agent_parallel`, orthogonal to `engine_kind`. For `multi_agent_parallel`, the deterministic `Router` filters the target workflow version's specialist agent steps (any `kind="agent"` step whose `input.agent_role` names a code-owned role) down to the objective-relevant ones before any task is persisted, and `GET /v1/runs/{run_id}` returns the routing decision under `strategy_metadata.routing_decision`. `POST /v1/multi-agent/comparisons` runs one frozen local objective through both strategies end to end and persists a `strategy_comparisons` row with measured metrics for each (task success, model/tool call counts, elapsed seconds, task status counts) and explicit statistical caveats; `GET /v1/multi-agent/comparisons` and `GET /v1/multi-agent/comparisons/{comparison_id}` expose the tenant-scoped report. No API lets a model or the router create task authority directly — both endpoints only ever narrow or execute an already-published, already-authorized workflow graph.
+
 Implemented evaluation harness tables currently include:
 
 | Table | Purpose | Important constraints |
@@ -213,6 +219,18 @@ Implemented MCP interoperability tables currently include:
 
 `POST /v1/mcp/servers` validates the connection (allowlisted stdio module, or SSRF-checked `https` URL), enforces the zero-cost transport gate (`http` requires `FORGE_EXTERNAL_INTEGRATIONS=enabled`), and requires `mcp.admin` plus `Idempotency-Key`. `POST /v1/mcp/servers/{id}:discover` performs a real MCP `tools/list` call, writes a capability snapshot, and upserts `mcp_tool_mappings` as `discovered`; a schema change on an already-`enabled` mapping retires its `tool_versions` row and flips it to `drifted`, and a tool missing from the new snapshot is marked `removed`. `POST /v1/mcp/servers/{id}/mappings/{mapping_id}:enable` requires `Idempotency-Key`, `If-Match`, and the exact currently-reviewed `schema_hash`; it creates or bumps a `tool_definitions`/`tool_versions` row with `origin='mcp'` and `trust_label='untrusted_tool_output'`, which then flows through the unchanged `run_tool_grants`/`tool_invocations`/`evidence_items`/approval machinery exactly like a code-registered tool. Disabling a mapping or server retires the linked `tool_versions` row; no API executes an MCP tool directly — execution only ever happens inside a run-scoped task that references the exact enabled tool name and version, identical to the Phase 4 typed tool runtime contract.
 
+Implemented multi-agent pattern fields and tables currently include:
+
+| Record | Purpose | Important constraints |
+|---|---|---|
+| `runs.strategy_kind` | Selects `single_agentic` or `multi_agent_parallel` execution strategy | Defaults to `single_agentic`; orthogonal to `engine_kind`; does not change tenant/tool/approval authority |
+| `runs.strategy_version` | Pins the strategy implementation version used by the run | Examples: `single-agentic-v1`, `multi-agent-parallel-v1` |
+| `runs.strategy_metadata` | Stores the router's selection decision | For `multi_agent_parallel`, includes `routing_decision` (selected/skipped roles and matched keywords); no credentials or raw model payloads |
+| `tasks.agent_role` | Names a specialist's code-owned role | Nullable; set only for specialist agent tasks, from the published workflow step, never from model output |
+| `strategy_comparisons` | One persisted comparison report | Tenant/workspace scoped; correlates a `single_agent_run_id` and `multi_agent_run_id` (both ordinary `runs` rows) with measured metrics and explicit caveats |
+
+Specialists are ordinary `kind="agent"` tasks with no dependency edges between them (parallel by construction of the unchanged Phase 2 DAG scheduler) plus one deterministic synthesizer task (`kind="deterministic"`, tagged `input.mode="multi_agent_synthesize"` rather than a new step kind — see migration 012 for why a new kind value was deliberately avoided) that depends on all of them. `SpecialistAgentRuntime` reuses the entire Phase 7 `AgentRuntime` decision loop unchanged; a specialist's safe termination (budget exhaustion, repeated invalid decisions, the model giving up) becomes a durable-task *success* carrying a soft `SpecialistResult(outcome=safe_failure)` payload in `tasks.result`, so the synthesizer can aggregate a partial answer instead of the whole run failing over one specialist's inconclusive result; a genuine infrastructure failure is not caught this way and still fails the task/run through the unchanged Phase 3 path. The synthesizer reads prerequisite specialists' results directly from `tasks.result` via the existing `task_dependencies` edges — the same storage every task result already uses — and never calls a model or a tool.
+
 ## Asynchronous envelope
 
 Every outbox/queue message has `message_id`, `schema_version`, `type`, `occurred_at`, `tenant_id`, `workspace_id`, `aggregate_type`, `aggregate_id`, `correlation_id`, `causation_id`, `trace_context`, and a minimal payload of durable IDs. Consumers reject unknown major schema versions, validate scope against database state, and deduplicate on `message_id` plus handler name.
@@ -240,6 +258,8 @@ Queues are partitioned/routed by workload and risk (`control`, `model`, `tool_re
 - `ReplayService.create(run, mode) -> simulation | blocked`
 - `TraceExportAdapter.export(run, evidence) -> local_artifact | blocked`
 - `MCPClientPort.health_check/discover/invoke(connection) -> MCPHealthResult | MCPDiscoveryResult | MCPInvocationResult`
+- `Router.route(objective, specialists) -> RoutingDecision` (deterministic, never a model call)
+- `SynthesizerRuntime.invoke_for_claim(claim) -> SynthesisResult | raises` (deterministic aggregation, never a model call)
 - `TelemetryPort` and `Clock`/`IdGenerator` for deterministic tests.
 
 Provider errors are normalized into `invalid_request`, `auth`, `rate_limited`, `transient`, `timeout`, `policy_blocked`, and `unknown`; only explicitly retryable classes enter backoff.

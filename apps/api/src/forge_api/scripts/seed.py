@@ -15,6 +15,8 @@ TOOL_WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000301"
 TOOL_WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000302"
 AGENT_WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000401"
 AGENT_WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000402"
+MULTI_AGENT_WORKFLOW_TEMPLATE_ID = "018f0000-0000-7000-8000-000000000501"
+MULTI_AGENT_WORKFLOW_VERSION_ID = "018f0000-0000-7000-8000-000000000502"
 
 
 def _assert_local_database_url(database_url: str) -> None:
@@ -64,6 +66,7 @@ def main() -> None:
         conn.execute("delete from task_attempts")
         conn.execute("delete from task_dependencies")
         conn.execute("delete from tasks")
+        conn.execute("delete from strategy_comparisons")
         conn.execute("delete from runs")
         conn.execute("delete from objectives")
         conn.execute("delete from workflow_edges")
@@ -376,6 +379,119 @@ def main() -> None:
                 json.dumps(agent_input),
             ),
         )
+        conn.execute(
+            """
+            insert into workflow_templates (id, tenant_id, workspace_id, name, created_by)
+            values (%s, %s, %s, %s, %s)
+            """,
+            (
+                MULTI_AGENT_WORKFLOW_TEMPLATE_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                "Multi-Agent Investigation Demo",
+                alice["id"],
+            ),
+        )
+        conn.execute(
+            """
+            insert into workflow_versions
+              (id, tenant_id, workspace_id, template_id, version_number, status, name, created_by)
+            values (%s, %s, %s, %s, 1, 'published', %s, %s)
+            """,
+            (
+                MULTI_AGENT_WORKFLOW_VERSION_ID,
+                TENANT_ID,
+                WORKSPACE_ID,
+                MULTI_AGENT_WORKFLOW_TEMPLATE_ID,
+                "Multi-Agent Investigation Demo",
+                alice["id"],
+            ),
+        )
+        specialist_budgets = {
+            "max_iterations": 4,
+            "max_tool_calls": 2,
+            "max_model_calls": 4,
+            "max_context_items": 4,
+            "max_invalid_decisions": 1,
+            "max_no_progress_decisions": 1,
+            "max_output_tokens": 800,
+        }
+        specialist_steps = [
+            (
+                "deployment_specialist",
+                "Deployment specialist investigation",
+                {
+                    "scenario": "success",
+                    "objective": "Investigate recent deployment history for regressions.",
+                    "agent_role": "deployment_specialist",
+                    "allowed_tools": [
+                        {"tool_name": "deployment_history.lookup", "tool_version": 1}
+                    ],
+                    "budgets": specialist_budgets,
+                },
+            ),
+            (
+                "customer_impact_specialist",
+                "Customer impact specialist investigation",
+                {
+                    "scenario": "success",
+                    "objective": "Investigate customer-reported symptoms and severity.",
+                    "agent_role": "customer_impact_specialist",
+                    "allowed_tools": [{"tool_name": "customer_reports.search", "tool_version": 1}],
+                    "budgets": specialist_budgets,
+                },
+            ),
+            (
+                "remediation_specialist",
+                "Remediation specialist proposal",
+                {
+                    "scenario": "approval_interrupt",
+                    "objective": "Propose a remediation ticket for exact-action approval.",
+                    "agent_role": "remediation_specialist",
+                    "allowed_tools": [{"tool_name": "ticket.create_simulated", "tool_version": 1}],
+                    "budgets": specialist_budgets,
+                },
+            ),
+        ]
+        for step_key, name, agent_input in specialist_steps:
+            conn.execute(
+                """
+                insert into workflow_steps
+                  (id, tenant_id, workspace_id, workflow_version_id, step_key, name, kind, input)
+                values (gen_random_uuid(), %s, %s, %s, %s, %s, 'agent', %s)
+                """,
+                (
+                    TENANT_ID,
+                    WORKSPACE_ID,
+                    MULTI_AGENT_WORKFLOW_VERSION_ID,
+                    step_key,
+                    name,
+                    json.dumps(agent_input),
+                ),
+            )
+        conn.execute(
+            """
+            insert into workflow_steps
+              (id, tenant_id, workspace_id, workflow_version_id, step_key, name, kind, input)
+            values (gen_random_uuid(), %s, %s, %s, 'synthesize_findings',
+                    'Synthesize specialist findings', 'deterministic', %s)
+            """,
+            (
+                TENANT_ID,
+                WORKSPACE_ID,
+                MULTI_AGENT_WORKFLOW_VERSION_ID,
+                json.dumps({"mode": "multi_agent_synthesize"}),
+            ),
+        )
+        for from_step, _name, _agent_input in specialist_steps:
+            conn.execute(
+                """
+                insert into workflow_edges
+                  (id, tenant_id, workspace_id, workflow_version_id, from_step_key, to_step_key)
+                values (gen_random_uuid(), %s, %s, %s, %s, 'synthesize_findings')
+                """,
+                (TENANT_ID, WORKSPACE_ID, MULTI_AGENT_WORKFLOW_VERSION_ID, from_step),
+            )
         TenantRepository(conn).audit(
             "local.seeded",
             TENANT_ID,
@@ -385,6 +501,7 @@ def main() -> None:
                 "workflow_version_id": WORKFLOW_VERSION_ID,
                 "tool_workflow_version_id": TOOL_WORKFLOW_VERSION_ID,
                 "agent_workflow_version_id": AGENT_WORKFLOW_VERSION_ID,
+                "multi_agent_workflow_version_id": MULTI_AGENT_WORKFLOW_VERSION_ID,
             },
         )
     print("Forge local demo data seeded.")

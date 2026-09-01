@@ -2,6 +2,7 @@ from typing import Any
 
 from forge_api.api.errors import ProblemError
 from forge_api.application.agent_runtime import AgentRuntime, LangGraphAgentRuntime
+from forge_api.application.multi_agent_runtime import SpecialistAgentRuntime, SynthesizerRuntime
 from forge_api.application.tool_runtime import ToolRuntime
 from forge_api.domain.approvals import ApprovalRequiredError
 from forge_api.domain.reliability import JobEnvelope, RetryPolicy, sanitize_payload
@@ -36,15 +37,29 @@ class DeterministicTaskExecutor:
         self.tool_runtime = tool_runtime
         self.agent_runtime = agent_runtime
         self.langgraph_agent_runtime = LangGraphAgentRuntime(database=agent_runtime.database)
+        self.specialist_agent_runtime = SpecialistAgentRuntime(database=agent_runtime.database)
+        self.synthesizer_runtime = SynthesizerRuntime(database=agent_runtime.database)
 
     def execute(self, claim: dict[str, Any]) -> dict[str, Any]:
         if claim.get("kind") == "agent":
+            task_input = claim.get("input", {})
+            is_specialist = isinstance(task_input, dict) and bool(task_input.get("agent_role"))
+            if is_specialist:
+                # Isolated parallel specialists (Phase 12) always run on the
+                # custom engine; LangGraph specialist orchestration is a
+                # documented future extension, not implemented here.
+                return self.specialist_agent_runtime.invoke_for_claim(claim)
             if claim.get("engine_kind") == "langgraph":
                 return self.langgraph_agent_runtime.invoke_for_claim(claim)
             return self.agent_runtime.invoke_for_claim(claim)
         if claim.get("kind") == "tool":
             return self.tool_runtime.invoke_for_claim(claim)
         task_input = claim.get("input", {})
+        if isinstance(task_input, dict) and task_input.get("mode") == "multi_agent_synthesize":
+            # Deterministic multi-agent synthesis (Phase 12) reuses the plain
+            # 'deterministic' step kind, tagged by this explicit input marker,
+            # rather than adding a new kind value (see migration 012 for why).
+            return self.synthesizer_runtime.invoke_for_claim(claim)
         failure_mode = task_input.get("failure_mode") if isinstance(task_input, dict) else None
         attempt_number = int(claim["attempt_number"])
         if failure_mode == "fail_once" and attempt_number == 1:

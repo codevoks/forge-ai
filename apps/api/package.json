@@ -12,6 +12,7 @@
     "demo:recovery": "../../.venv/bin/python -m forge_api.scripts.demo_recovery",
     "demo:tools": "../../.venv/bin/python -m forge_api.scripts.demo_tools",
     "demo:mcp": "../../.venv/bin/python -m forge_api.scripts.demo_mcp",
+    "demo:multi-agent": "../../.venv/bin/python -m forge_api.scripts.demo_multi_agent",
     "db:migrate": "../../.venv/bin/python -m forge_api.scripts.migrate",
     "db:seed": "../../.venv/bin/python -m forge_api.scripts.seed",
     "dev": "../../.venv/bin/uvicorn forge_api.main:create_app --factory --host 127.0.0.1 --port 8000 --reload",

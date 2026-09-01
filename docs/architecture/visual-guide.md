@@ -388,3 +388,43 @@ flowchart TD
     MAPPING -- missing from snapshot --> REMOVED
     ENABLED -->|identical to a code tool| RUNTIME
 ```
+
+## Multi-agent routing, isolation, and deterministic synthesis
+
+Phase 12 adds no new scheduler, queue, or task kind. Specialists are ordinary `kind="agent"` tasks with no dependency edges between them, so the unchanged Phase 2 DAG scheduler fans them out in parallel by construction; the synthesizer is an ordinary `kind="deterministic"` task that depends on all of them, so the scheduler fans back in the same way it already does for the "Incident Response Demo" diamond shape.
+
+```mermaid
+flowchart TD
+    OBJ[Run objective]
+    ROUTER[Deterministic Router\ncode-owned keywords, never a model call]
+    FILTER[Filter workflow steps/edges\nbefore any task is persisted]
+    CREATE[RunRepository.create_run\nunchanged Phase 2 task/edge insert]
+    SPECA[Specialist task A\nkind=agent, agent_role=X\nown allowed_tools + budgets]
+    SPECB[Specialist task B\nkind=agent, agent_role=Y]
+    ISOEV_A[(evidence_items\nscoped to task A)]
+    ISOEV_B[(evidence_items\nscoped to task B)]
+    SAFE{Safe termination?}
+    SOFT[SpecialistResult\noutcome=safe_failure\ntask still SUCCEEDED]
+    OK[SpecialistResult\noutcome=succeeded]
+    SYNTH[Synthesizer task\nkind=deterministic, mode=multi_agent_synthesize\nreads tasks.result via task_dependencies]
+    AGG{Any usable\nspecialist result?}
+    PARTIAL[SynthesisResult\npartial_failure=true]
+    FULL[SynthesisResult\npartial_failure=false]
+    FAILRUN[Task + run fail closed\nmulti_agent_synthesis_no_usable_results]
+
+    OBJ --> ROUTER --> FILTER --> CREATE
+    CREATE --> SPECA
+    CREATE --> SPECB
+    SPECA --> ISOEV_A
+    SPECB --> ISOEV_B
+    SPECA --> SAFE
+    SPECB --> SAFE
+    SAFE -- yes --> SOFT
+    SAFE -- no --> OK
+    SOFT --> SYNTH
+    OK --> SYNTH
+    SYNTH --> AGG
+    AGG -- some succeeded --> PARTIAL
+    AGG -- all succeeded --> FULL
+    AGG -- none succeeded --> FAILRUN
+```

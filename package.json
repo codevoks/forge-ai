@@ -23,7 +23,8 @@
     "demo:planning": "pnpm --filter @forge/api demo:planning",
     "demo:approvals": "pnpm --filter @forge/api demo:approvals",
     "demo:tools": "pnpm --filter @forge/api demo:tools",
-    "demo:mcp": "pnpm --filter @forge/api demo:mcp"
+    "demo:mcp": "pnpm --filter @forge/api demo:mcp",
+    "demo:multi-agent": "pnpm --filter @forge/api demo:multi-agent"
   },
   "devDependencies": {
     "turbo": "2.6.1"

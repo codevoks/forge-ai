@@ -90,6 +90,7 @@ class AgentTaskInput(StrictModel):
     objective: str = Field(min_length=2, max_length=4096)
     allowed_tools: list[AgentAllowedTool] = Field(min_length=1, max_length=4)
     budgets: AgentBudget = Field(default_factory=AgentBudget)
+    agent_role: str | None = Field(default=None, min_length=2, max_length=60)
 
 
 class AgentContextItem(StrictModel):

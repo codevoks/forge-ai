@@ -1,7 +1,13 @@
 from typing import Any
 
 from forge_api.api.errors import ProblemError
+from forge_api.application.multi_agent_router import apply_router
 from forge_api.domain.identity import ActorContext, Capability
+from forge_api.domain.multi_agent import (
+    ExecutionStrategyKind,
+    parse_execution_strategy_kind,
+    strategy_version_for,
+)
 from forge_api.domain.workflow import validate_payload_size
 from forge_api.domain.workflow_engine import (
     WorkflowEngineMetadata,
@@ -74,6 +80,14 @@ class RunService:
                 raise ProblemError(
                     422, "workflow_workspace_mismatch", "Workflow version is not in the workspace."
                 )
+            strategy_kind = parse_execution_strategy_kind(payload.get("strategy_kind"))
+            strategy_metadata: dict[str, Any] = {}
+            if strategy_kind is ExecutionStrategyKind.MULTI_AGENT_PARALLEL:
+                workflow_version, routing_decision = apply_router(
+                    workflow_version=workflow_version,
+                    objective=str(payload["objective"]),
+                )
+                strategy_metadata = {"routing_decision": routing_decision.model_dump(mode="json")}
             run = RunRepository(conn).create_run(
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
@@ -84,6 +98,9 @@ class RunService:
                 engine_kind=engine_kind.value,
                 engine_version=engine_version_for(engine_kind),
                 engine_metadata=engine_metadata.model_dump(mode="json"),
+                strategy_kind=strategy_kind.value,
+                strategy_version=strategy_version_for(strategy_kind),
+                strategy_metadata=strategy_metadata,
             )
             response = {"run": run}
             idempotency.save(

@@ -32,6 +32,13 @@ from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.engine_repositories import WorkflowEngineCheckpointRepository
 from forge_api.infrastructure.workflow_repositories import EventRepository
 
+# Deterministic default arguments per code-registered tool, used only for the
+# fake model's routine "collect evidence with my first granted tool" branch.
+_DEFAULT_TOOL_ARGUMENTS: dict[str, dict[str, object]] = {
+    "deployment_history.lookup": {"service": "api", "environment": "production"},
+    "customer_reports.search": {"product_area": "worker", "severity": "medium"},
+}
+
 
 class DeterministicAgentModel:
     def decide(self, *, state: AgentState, scenario: AgentScenario) -> str:
@@ -110,14 +117,22 @@ class DeterministicAgentModel:
                 }
             )
         if not state.evidence:
+            # Pick the task's own first granted tool rather than a hardcoded
+            # name: a single-agent Phase 7 task and an isolated Phase 12
+            # specialist both reach this branch, and each must collect
+            # evidence using only the tool it was actually scoped to.
+            tool = state.allowed_tools[0]
+            arguments = _DEFAULT_TOOL_ARGUMENTS.get(
+                tool.tool_name, {"service": "api", "environment": "production"}
+            )
             return json.dumps(
                 {
                     "decision": "tool_call",
-                    "rationale": "Collect deterministic deployment evidence before concluding.",
+                    "rationale": "Collect deterministic evidence before concluding.",
                     "tool_call": {
-                        "tool_name": "deployment_history.lookup",
-                        "tool_version": 1,
-                        "arguments": {"service": "api", "environment": "production"},
+                        "tool_name": tool.tool_name,
+                        "tool_version": tool.tool_version,
+                        "arguments": arguments,
                     },
                 }
             )
@@ -127,8 +142,9 @@ class DeterministicAgentModel:
                 "rationale": "Use persisted evidence to produce a cited result.",
                 "completion": {
                     "summary": (
-                        "Local deployment history was collected and no unsafe external provider "
-                        "call was needed. The conclusion is grounded in the cited evidence."
+                        "Local deterministic evidence was collected and no unsafe external "
+                        "provider call was needed. The conclusion is grounded in the cited "
+                        "evidence."
                     ),
                     "citations": [state.evidence[0].evidence_item_id],
                 },
@@ -242,6 +258,7 @@ class AgentRuntime:
             repo = AgentRepository(conn)
             evidence = repo.recent_evidence(
                 run_id=str(claim["run_id"]),
+                task_id=str(claim["task_id"]),
                 limit=agent_input.budgets.max_context_items,
             )
             model_calls_used = repo.count_model_calls(task_id=str(claim["task_id"]))

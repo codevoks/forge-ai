@@ -17,6 +17,7 @@ class RunCreateRequest(BaseModel):
     objective: str = Field(min_length=2, max_length=4096)
     constraints: dict[str, Any] = Field(default_factory=dict)
     engine_kind: Literal["custom", "langgraph"] = "custom"
+    strategy_kind: Literal["single_agentic", "multi_agent_parallel"] = "single_agentic"
 
 
 class RunCancelRequest(BaseModel):
