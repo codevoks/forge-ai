@@ -13,8 +13,9 @@ The following are conceptual tables; migrations are introduced in the owning pha
 | Approval | approval_requests, approval_decisions | action hash, expiry, eligible actor, one terminal decision |
 | Engine comparison | workflow_engine_checkpoints | sanitized framework checkpoint metadata mapped to run/task/attempt; not authoritative |
 | Evaluation | evaluation_suites, evaluation_cases, evaluation_runs, evaluation_case_results, metric_values, evaluation_exports | tenant-scoped deterministic suites, case verdicts, normalized metrics, and sanitized optional export artifacts |
+| Debugging/replay | debugger_projection_verifications, debugger_replay_sessions, debugger_replay_artifacts, debugger_trace_exports | tenant-scoped operator artifacts; simulation replay by default; live trace export opt-in |
 | Reliability | idempotency_records, inbox_messages, outbox_messages, dead_letters, leases | unique logical keys; retry schedule; claim fencing |
-| Audit | execution_events, security_audit_events | append-only application permissions; sanitized metadata |
+| Audit | execution_events, security_audit_events | append-only application permissions; event schema version, cursor ordering, trace metadata, sanitized payload/diff metadata |
 
 All primary identifiers are application-generated UUIDv7 values. Timestamps are UTC `timestamptz`. Mutable aggregates use integer `version` for optimistic concurrency. JSONB is allowed for versioned schemas, provider-neutral payloads, and evidence; relationships, states, ownership, uniqueness, money, and query-critical fields remain relational.
 
@@ -56,7 +57,7 @@ Application services own transaction orchestration. Repositories do persistence 
 - Optimistic updates accept `If-Match`/resource version and return `409` on conflict.
 - Errors use a stable problem-details envelope: `code`, safe `message`, `correlation_id`, optional field errors, and retryability. Internal/provider text is not returned raw.
 - Cursor pagination is mandatory for collections. Filters are allowlisted and tenant-scoped.
-- Initial progress transport is polling plus cursor-based `GET /v1/runs/{id}/events`; SSE may be added in Phase 10. Commands never wait for full execution.
+- Initial progress transport is polling plus cursor-based event feeds. SSE remains deferred until measured UI need justifies the extra lifecycle and reconnect surface. Commands never wait for full execution.
 
 Core endpoint families:
 
@@ -103,6 +104,11 @@ POST /v1/approvals:expire
 POST /v1/evaluations
 GET /v1/evaluations
 GET /v1/evaluations/{evaluation_run_id}
+GET /v1/runs/{run_id}/debugger
+GET /v1/runs/{run_id}/debugger/events
+POST /v1/runs/{run_id}/debugger/projection-verifications
+POST /v1/runs/{run_id}/debugger/replays
+POST /v1/runs/{run_id}/debugger/trace-exports
 ```
 
 `POST /v1/runs/{run_id}:advance` remains a deterministic manual fallback for local debugging and learning. The primary local execution path now uses the transactional outbox, Redis Streams `QueuePort`, worker claims, attempt leases, checkpoints, retries, dead letters, and recovery scanner. Operator recovery routes require `run.recover`; dead-letter payloads expose only sanitized error summaries, never task inputs, secrets, provider payloads, or raw tool/model output.
@@ -174,6 +180,19 @@ Implemented evaluation harness tables currently include:
 
 `POST /v1/evaluations` requires `Idempotency-Key` and `run.create` on the target workspace. The offline suite drives real Forge application services: planner/model-call persistence, LangChain deterministic provider wrapping, LangGraph/custom engine execution, worker safe-failure handling, and export artifact generation. `langsmith_export_mode=enabled` fails closed while external integrations are disabled. `GET /v1/evaluations` and `GET /v1/evaluations/{evaluation_run_id}` are tenant/workspace scoped by actor context and RLS.
 
+Implemented debugger/replay tables currently include:
+
+| Table | Purpose | Important constraints |
+|---|---|---|
+| `debugger_projection_verifications` | Persisted event-fold vs authoritative-state comparison | Created only by actors with `run.recover`; records mismatches instead of mutating runtime state |
+| `debugger_replay_sessions` | Audited replay/simulation request | `simulation` is the default runnable mode; `effect_replay` is persisted as `blocked` in the current implementation |
+| `debugger_replay_artifacts` | Sanitized replay artifact/tripwire evidence | Records event hashes, model-call IDs, tool action hashes, and proof that real effect adapters/old approvals were not used |
+| `debugger_trace_exports` | Local trace/LangSmith-shaped correlation seam | Default export is a local artifact with `live_export=false`; live export is blocked while external integrations are disabled |
+
+`GET /v1/runs/{run_id}/debugger` requires `run.read` and returns a sanitized operator snapshot: event catalog, cursor timeline, tasks, model calls, tool invocations, evidence, bounded-agent iterations, Forge checkpoints, LangGraph checkpoint mirrors, latest projection verification, replay sessions, trace exports, and explicit security posture flags. It never exposes raw provider/tool payloads or secret material. `GET /v1/runs/{run_id}/debugger/events` supports scope-revalidated cursor resume; forged or cross-run cursors return `debug_cursor_invalid`.
+
+Debugger mutation endpoints require `Idempotency-Key` and `run.recover`. Projection verification folds known event schemas and compares them with current `runs`/`tasks`; a mismatch is reported as an operator finding, not auto-repaired. Replay simulation reads evidence and records a replay artifact with tripwires. It does not call model providers, tool adapters, approval consumption, queues, or state transition code. Effect replay is intentionally disabled and returns a blocked replay session. Trace export creates a sanitized local artifact linking events, model calls, tool invocations, and LangGraph checkpoints; LangSmith/live telemetry export remains explicit opt-in and non-authoritative.
+
 ## Asynchronous envelope
 
 Every outbox/queue message has `message_id`, `schema_version`, `type`, `occurred_at`, `tenant_id`, `workspace_id`, `aggregate_type`, `aggregate_id`, `correlation_id`, `causation_id`, `trace_context`, and a minimal payload of durable IDs. Consumers reject unknown major schema versions, validate scope against database state, and deduplicate on `message_id` plus handler name.
@@ -196,6 +215,10 @@ Queues are partitioned/routed by workload and risk (`control`, `model`, `tool_re
 - `WorkflowEngine.invoke_for_claim(claim) -> task_result`
 - `EvaluationRunner.run(suite, providers, engines) -> EvaluationRun`
 - `LangSmithExperimentExporter.export(run, results, metrics) -> local_artifact | blocked | exported`
+- `DebuggerQuery.timeline(run, cursor) -> sanitized events`
+- `ProjectionVerifier.verify(run) -> verification result`
+- `ReplayService.create(run, mode) -> simulation | blocked`
+- `TraceExportAdapter.export(run, evidence) -> local_artifact | blocked`
 - `TelemetryPort` and `Clock`/`IdGenerator` for deterministic tests.
 
 Provider errors are normalized into `invalid_request`, `auth`, `rate_limited`, `transient`, `timeout`, `policy_blocked`, and `unknown`; only explicitly retryable classes enter backoff.

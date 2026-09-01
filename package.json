@@ -18,6 +18,7 @@
     "db:seed": "pnpm --filter @forge/api db:seed",
     "demo:agentic": "pnpm --filter @forge/api demo:agentic",
     "demo:evaluations": "pnpm --filter @forge/api demo:evaluations",
+    "demo:debugger": "pnpm --filter @forge/api demo:debugger",
     "demo:langgraph": "pnpm --filter @forge/api demo:langgraph",
     "demo:planning": "pnpm --filter @forge/api demo:planning",
     "demo:approvals": "pnpm --filter @forge/api demo:approvals",

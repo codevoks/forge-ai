@@ -109,6 +109,36 @@ flowchart TD
 
 LangChain and LangGraph can structure prompts, message flow, and graph execution, but they cannot grant tools, approve effects, change tenant scope, suppress budgets, or mark a run successful. LangSmith export is observational: default mode writes a local sanitized artifact with `live_export=false`; live export requires explicit external-integration opt-in and cannot affect evaluation verdicts.
 
+## Execution debugger and safe replay path
+
+The debugger is an operator/read-model use case over already-committed evidence. It does not resume framework checkpoints, consume approvals, enqueue work, or write authoritative run/task state. Cursor feeds are scope-revalidated on every request; SSE remains deferred because polling plus cursor resume satisfies the current product demo without adding a reconnect lifecycle.
+
+```mermaid
+flowchart TD
+    UI[Debugger UI/API] --> AUTH[Actor + workspace authorization]
+    AUTH --> SNAPSHOT[DebuggerService]
+    SNAPSHOT --> EVENTS[(execution_events v1)]
+    SNAPSHOT --> STATE[(runs / tasks)]
+    SNAPSHOT --> MODEL[(model_calls)]
+    SNAPSHOT --> TOOL[(tool_invocations / evidence_items)]
+    SNAPSHOT --> AGENT[(agent_iterations / checkpoints)]
+    SNAPSHOT --> LG[(workflow_engine_checkpoints)]
+    SNAPSHOT --> VERIFY[ProjectionVerifier]
+    VERIFY --> FINDING[(debugger_projection_verifications)]
+    SNAPSHOT --> REPLAY[ReplayService]
+    REPLAY --> SIM[Simulation adapter set]
+    SIM --> ARTIFACT[(debugger_replay_artifacts)]
+    REPLAY -. blocked .-> EFFECT[Effect replay / real adapters]
+    SNAPSHOT --> TRACE[Trace export seam]
+    TRACE --> LOCAL[(local trace artifact)]
+    TRACE -. explicit opt-in only .-> LIVE[Live LangSmith/telemetry]
+
+    classDef blocked stroke-dasharray: 5 5;
+    class EFFECT,LIVE blocked;
+```
+
+Projection verification folds known event schemas and compares the result with current authoritative rows; mismatches are persisted as debugger findings and never auto-repaired. Simulation replay records event hashes, model-call references, and tool action hashes with tripwires proving that real effect adapters and previous approvals were not used. LangGraph checkpoints are displayed beside Forge events for reconstruction only; they cannot become authorization or scheduling inputs.
+
 ## Control plane versus execution plane
 
 - **Control plane:** identity, tenant/workspace administration, workflow/tool registration, policies, credentials references, budgets, approvals.

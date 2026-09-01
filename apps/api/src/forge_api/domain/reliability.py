@@ -92,18 +92,30 @@ class RetryPolicy:
         return RetryDecision(True, now + timedelta(seconds=delay), "retry_scheduled")
 
 
+def _sanitize_value(value: Any, *, max_string_length: int) -> Any:
+    if isinstance(value, str):
+        return value[:max_string_length]
+    if isinstance(value, int | float | bool) or value is None:
+        return value
+    if isinstance(value, dict):
+        return sanitize_payload(value, max_string_length=max_string_length)
+    if isinstance(value, list):
+        return [
+            _sanitize_value(item, max_string_length=max_string_length)
+            for item in value[:50]
+        ]
+    return str(value)[:max_string_length]
+
+
 def sanitize_payload(payload: dict[str, Any], *, max_string_length: int = 200) -> dict[str, Any]:
     sanitized: dict[str, Any] = {}
     for key, value in payload.items():
         normalized_key = str(key)
         if "secret" in normalized_key.lower() or "token" in normalized_key.lower():
             sanitized[normalized_key] = "[redacted]"
-        elif isinstance(value, str):
-            sanitized[normalized_key] = value[:max_string_length]
-        elif isinstance(value, int | float | bool) or value is None:
-            sanitized[normalized_key] = value
-        elif isinstance(value, dict):
-            sanitized[normalized_key] = sanitize_payload(value, max_string_length=max_string_length)
         else:
-            sanitized[normalized_key] = str(value)[:max_string_length]
+            sanitized[normalized_key] = _sanitize_value(
+                value,
+                max_string_length=max_string_length,
+            )
     return sanitized

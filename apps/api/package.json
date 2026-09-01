@@ -5,6 +5,7 @@
     "build": "../../.venv/bin/python -m compileall src tests",
     "demo:agentic": "../../.venv/bin/python -m forge_api.scripts.demo_agentic",
     "demo:evaluations": "../../.venv/bin/python -m forge_api.scripts.demo_evaluations",
+    "demo:debugger": "../../.venv/bin/python -m forge_api.scripts.demo_debugger",
     "demo:langgraph": "../../.venv/bin/python -m forge_api.scripts.demo_langgraph",
     "demo:planning": "../../.venv/bin/python -m forge_api.scripts.demo_planning",
     "demo:approvals": "../../.venv/bin/python -m forge_api.scripts.demo_approvals",

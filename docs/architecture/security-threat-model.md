@@ -117,3 +117,11 @@ No phase passes with known cross-tenant access, model-controlled authorization, 
 | LangSmith export seam | Protected and verified for zero-cost mode | Default export is a local sanitized artifact with `live_export=false`; `langsmith_export_mode=enabled` fails closed while external integrations are disabled |
 | Security/adversarial suite increment | Protected and verified | Offline suite records security-critical LangChain hallucinated-tool denial, prompt-injection containment, and LangGraph step-limit safe failure |
 | Live LangSmith account-backed export | Not applicable yet | No approved account or endpoint is configured; live export is opt-in and does not block the zero-cost path |
+| Debugger history tenant isolation | Protected and verified | `GET /v1/runs/{run_id}/debugger` returns `404 run_not_found` for a cross-tenant actor and RLS scopes debugger artifacts |
+| Debug cursor tampering | Protected and verified | Forged or cross-run debugger cursors return `debug_cursor_invalid`; every cursor request revalidates run/workspace access |
+| Debugger payload/output injection | Protected and verified | Debugger snapshots sanitize payloads, preserve redacted lists safely, and React renders values as escaped data rather than active HTML |
+| Projection verification integrity | Protected and verified | `debugger_projection_verifications` records event-fold/current-state mismatches as findings; it never mutates authoritative run/task rows |
+| Simulation replay safety | Protected and verified | Simulation replay records tripwires showing no real effect adapter calls, no approval reuse, no authoritative state mutation, and zero paid provider calls |
+| Unsafe effect replay | Protected and verified | `effect_replay` requests are persisted as `blocked`; arbitrary side-effect replay remains disabled |
+| LangGraph checkpoint authority in debugger | Protected and verified | Debugger correlates `workflow_engine_checkpoints` as read-only evidence; framework checkpoint state is explicitly non-authoritative |
+| LangSmith/trace export default path | Protected and verified | Local trace export correlates events/model calls/tool invocations/checkpoints with `live_export=false`; live export is blocked while external integrations are disabled |

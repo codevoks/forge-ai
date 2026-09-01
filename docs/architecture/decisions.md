@@ -73,6 +73,8 @@ No vector database in the base architecture. Add retrieval only when a concrete 
 
 Polling with event cursors is the correctness baseline. Add SSE in Phase 10 if user-experience measurement warrants it. WebSockets require bidirectional low-latency need and are not currently justified.
 
+Phase 10 implementation evidence: cursor-based debugger event feeds, projection verification, and replay/trace commands satisfy the current operator workflow without measured UI latency or reconnection pain. SSE is therefore still deferred. The API now has a scope-revalidated cursor feed under `/v1/runs/{run_id}/debugger/events`; any future SSE gateway must use the same cursor semantics, authorization checks, and redaction contract rather than becoming a second event authority.
+
 ### Q-010 Infrastructure topology
 
 An optional AWS production topology may include container service, managed PostgreSQL, managed Redis, object storage, secret manager, and an OpenTelemetry backend, but ECS versus EKS, RDS versus Aurora, and Temporal adoption remain workload/team/cost choices. Phase 13 can author and validate Terraform and document the deployment without applying it. No cloud resource is provisioned without explicit user approval; the complete portfolio demo remains local.

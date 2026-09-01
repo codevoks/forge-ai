@@ -6,6 +6,7 @@ from forge_api.api.rate_limit import LocalRateLimitMiddleware
 from forge_api.api.routes import (
     agents,
     approvals,
+    debugging,
     dev_oidc,
     engines,
     evaluations,
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(engines.router)
     app.include_router(evaluations.router)
+    app.include_router(debugging.router)
     app.include_router(health.router)
     app.include_router(dev_oidc.router)
     app.include_router(identity.router)

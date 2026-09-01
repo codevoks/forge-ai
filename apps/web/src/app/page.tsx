@@ -6,7 +6,10 @@ import {
   advanceRun,
   approveRequest,
   cancelRun,
+  createDebugReplay,
+  createTraceExport,
   createRun,
+  getDebuggerSnapshot,
   getRun,
   getDemoToken,
   getMe,
@@ -28,9 +31,11 @@ import {
   rejectRequest,
   runRecoveryScan,
   runOfflineEvaluation,
+  verifyProjection,
   type ApprovalRequest,
   type AgentIteration,
   type DeadLetter,
+  type DebuggerSnapshot,
   type EngineCheckpoint,
   type EvaluationRun,
   type EvidenceItem,
@@ -97,6 +102,8 @@ export default function Home() {
   const [recovery, setRecovery] = useState<RecoveryScan | null>(null);
   const [evaluationRun, setEvaluationRun] = useState<EvaluationRun | null>(null);
   const [evaluationRunning, setEvaluationRunning] = useState(false);
+  const [debuggerSnapshot, setDebuggerSnapshot] = useState<DebuggerSnapshot | null>(null);
+  const [debuggerRunning, setDebuggerRunning] = useState(false);
 
   async function loadIdentity(subject: DemoSubject) {
     setSelected(subject);
@@ -119,6 +126,8 @@ export default function Home() {
     setRecovery(null);
     setEvaluationRun(null);
     setEvaluationRunning(false);
+    setDebuggerSnapshot(null);
+    setDebuggerRunning(false);
     setStatus("Loading signed local token and workspace scope...");
     try {
       const nextToken = await getDemoToken(subject);
@@ -179,6 +188,7 @@ export default function Home() {
     setPlans(nextPlans);
     setModelCalls(nextModelCalls);
     setApprovals(await listApprovals(token));
+    setDebuggerSnapshot(null);
     const hasAgentTask = nextTasks.some((task) => task.kind === "agent");
     setAgentIterations(hasAgentTask ? await listAgentIterations(token, runId) : []);
     setEngineCheckpoints(
@@ -318,6 +328,95 @@ export default function Home() {
       setStatus("Offline evaluation failed safely.");
     } finally {
       setEvaluationRunning(false);
+    }
+  }
+
+  async function loadDebugger() {
+    if (!run || !token) {
+      return;
+    }
+    setError("");
+    setDebuggerRunning(true);
+    setStatus("Loading sanitized execution history, checkpoints, and trace evidence...");
+    try {
+      const snapshot = await getDebuggerSnapshot(token, run.id);
+      setDebuggerSnapshot(snapshot);
+      setStatus(
+        `Debugger loaded. Events: ${snapshot.timeline.events.length}; model calls: ${snapshot.model_calls.length}; tool calls: ${snapshot.tool_invocations.length}.`
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Debugger load failed safely.");
+    } finally {
+      setDebuggerRunning(false);
+    }
+  }
+
+  async function runProjectionVerification() {
+    if (!run || !token) {
+      return;
+    }
+    setError("");
+    setDebuggerRunning(true);
+    setStatus("Folding event history and comparing it with authoritative run/task state...");
+    try {
+      await verifyProjection(token, run.id);
+      const snapshot = await getDebuggerSnapshot(token, run.id);
+      setDebuggerSnapshot(snapshot);
+      setStatus(
+        `Projection verification ${snapshot.projection_verification?.status ?? "unknown"} with ${snapshot.projection_verification?.mismatch_count ?? 0} mismatches.`
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Projection verification failed safely.");
+    } finally {
+      setDebuggerRunning(false);
+    }
+  }
+
+  async function runReplay(mode: "simulation" | "effect_replay") {
+    if (!run || !token) {
+      return;
+    }
+    setError("");
+    setDebuggerRunning(true);
+    setStatus(
+      mode === "simulation"
+        ? "Running simulation replay with tripwires against real effects..."
+        : "Attempting unsafe effect replay to prove it is blocked..."
+    );
+    try {
+      const replay = await createDebugReplay(token, run.id, mode);
+      const snapshot = await getDebuggerSnapshot(token, run.id);
+      setDebuggerSnapshot(snapshot);
+      setStatus(`Replay ${replay.mode} ended as ${replay.status}. Live state was not mutated.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Replay request failed safely.");
+    } finally {
+      setDebuggerRunning(false);
+    }
+  }
+
+  async function exportLocalTrace() {
+    if (!run || !token) {
+      return;
+    }
+    setError("");
+    setDebuggerRunning(true);
+    setStatus("Creating local LangSmith-shaped trace correlation artifact...");
+    try {
+      const traceExport = await createTraceExport(token, run.id, "local");
+      const snapshot = await getDebuggerSnapshot(token, run.id);
+      setDebuggerSnapshot(snapshot);
+      setStatus(
+        `Trace export ${traceExport.status}. Live export: ${String(traceExport.live_export)}; paid calls: ${String(traceExport.artifact.paid_provider_calls ?? 0)}.`
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Trace export failed safely.");
+    } finally {
+      setDebuggerRunning(false);
     }
   }
 
@@ -821,6 +920,7 @@ export default function Home() {
                     setModelCalls([]);
                     setAgentIterations([]);
                     setEngineCheckpoints([]);
+                    setDebuggerSnapshot(null);
                   }}
                 >
                   {workflow.name}
@@ -1227,6 +1327,173 @@ export default function Home() {
                   </li>
                 ))}
               </ol>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm text-zinc-400">Execution debugger and safe replay</p>
+                  <h3 className="mt-1 font-semibold text-zinc-50">
+                    Explain the run from event history without turning replay into authority
+                  </h3>
+                  <p className="mt-2 text-sm text-zinc-400">
+                    The debugger correlates execution events, model calls, tool invocations,
+                    evidence, Forge checkpoints, and LangGraph checkpoint mirrors. Replay is
+                    simulation-only by default; unsafe effect replay is blocked.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className={`${buttonBase} ${debuggerSnapshot ? "" : activeButton}`}
+                    disabled={debuggerRunning}
+                    onClick={() => void loadDebugger()}
+                  >
+                    {debuggerRunning ? "Working..." : "Load debugger"}
+                  </button>
+                  <button
+                    className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
+                    disabled={!canRecover || debuggerRunning}
+                    onClick={() => void runProjectionVerification()}
+                  >
+                    Verify projection
+                  </button>
+                  <button
+                    className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
+                    disabled={!canRecover || debuggerRunning}
+                    onClick={() => void runReplay("simulation")}
+                  >
+                    Simulation replay
+                  </button>
+                  <button
+                    className={buttonBase}
+                    disabled={!canRecover || debuggerRunning}
+                    onClick={() => void runReplay("effect_replay")}
+                  >
+                    Prove effect replay blocked
+                  </button>
+                  <button
+                    className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
+                    disabled={!canRecover || debuggerRunning}
+                    onClick={() => void exportLocalTrace()}
+                  >
+                    Export local trace
+                  </button>
+                </div>
+              </div>
+
+              {debuggerSnapshot ? (
+                <div className="mt-4 grid gap-4">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                    <article className={cardClass}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Events</p>
+                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                        {debuggerSnapshot.timeline.events.length}
+                      </p>
+                    </article>
+                    <article className={cardClass}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Models</p>
+                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                        {debuggerSnapshot.model_calls.length}
+                      </p>
+                    </article>
+                    <article className={cardClass}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Tools</p>
+                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                        {debuggerSnapshot.tool_invocations.length}
+                      </p>
+                    </article>
+                    <article className={cardClass}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">
+                        Projection
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
+                        {debuggerSnapshot.projection_verification?.status ?? "not run"}
+                      </p>
+                    </article>
+                    <article className={cardClass}>
+                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">
+                        Paid calls
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-zinc-50">0</p>
+                    </article>
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+                    <article className={cardClass}>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h4 className="font-semibold text-zinc-50">Causal timeline</h4>
+                        <span className={pillClass}>
+                          cursor {debuggerSnapshot.timeline.next_cursor ? "available" : "empty"}
+                        </span>
+                      </div>
+                      <ol className="mt-3 grid gap-2">
+                        {debuggerSnapshot.timeline.events.slice(-8).map((debugEvent) => (
+                          <li
+                            className="rounded-xl border border-zinc-800 bg-black/30 p-3"
+                            key={debugEvent.id}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={pillClass}>#{debugEvent.sequence}</span>
+                              <span className="font-mono text-xs text-violet-200">
+                                {debugEvent.event_type}
+                              </span>
+                              <span className={mutedPillClass}>v{debugEvent.schema_version}</span>
+                              <span className={mutedPillClass}>
+                                known {String(debugEvent.catalog_known)}
+                              </span>
+                            </div>
+                            <p className="mt-2 break-all font-mono text-xs text-zinc-500">
+                              payload hash {debugEvent.payload_hash?.slice(0, 24)}… · correlation{" "}
+                              {debugEvent.correlation_id.slice(0, 16)}…
+                            </p>
+                          </li>
+                        ))}
+                      </ol>
+                    </article>
+
+                    <article className={cardClass}>
+                      <h4 className="font-semibold text-zinc-50">Replay and trace evidence</h4>
+                      <div className="mt-3 grid gap-2 text-sm text-zinc-300">
+                        <p>
+                          Raw payloads exposed:{" "}
+                          {String(debuggerSnapshot.security_posture.raw_payloads_exposed)}
+                        </p>
+                        <p>
+                          Effect replay enabled:{" "}
+                          {String(debuggerSnapshot.security_posture.effect_replay_enabled)}
+                        </p>
+                        <p>
+                          Framework state authoritative:{" "}
+                          {String(debuggerSnapshot.security_posture.framework_state_authoritative)}
+                        </p>
+                        <p>
+                          Secrets redacted:{" "}
+                          {String(debuggerSnapshot.security_posture.secrets_redacted)}
+                        </p>
+                      </div>
+                      <pre className="mt-4 max-h-80 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
+                        {JSON.stringify(
+                          {
+                            projection: debuggerSnapshot.projection_verification,
+                            replay: debuggerSnapshot.replay_sessions[0] ?? null,
+                            trace_export: debuggerSnapshot.trace_exports[0] ?? null,
+                            langgraph_checkpoints:
+                              debuggerSnapshot.engine_checkpoints.length,
+                            forge_checkpoints: debuggerSnapshot.forge_checkpoints.length
+                          },
+                          null,
+                          2
+                        )}
+                      </pre>
+                    </article>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-zinc-500">
+                  Create or load a run, then open the debugger to inspect sanitized history,
+                  projection status, replay safety, and local trace export evidence.
+                </p>
+              )}
             </div>
 
             {toolInvocations.length > 0 ? (

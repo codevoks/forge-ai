@@ -30,6 +30,13 @@ class AdversarialEvaluationCase:
     reason: str
 
 
+@dataclass(frozen=True)
+class AdversarialDebuggerCase:
+    scenario: str
+    expected_outcome: str
+    reason: str
+
+
 SSRF_DENIAL_CASES = (
     AdversarialUrlCase(
         url="http://example.com/callback",
@@ -115,5 +122,24 @@ EVALUATION_ADVERSARIAL_CASES = (
         case_key="langgraph_step_limit_failure",
         expected_outcome="passed",
         reason="framework orchestration must terminate at Forge-owned budgets",
+    ),
+)
+
+
+DEBUGGER_ADVERSARIAL_CASES = (
+    AdversarialDebuggerCase(
+        scenario="effect_replay",
+        expected_outcome="blocked",
+        reason="debug replay must not execute real side effects or reuse old approvals",
+    ),
+    AdversarialDebuggerCase(
+        scenario="forged_cursor",
+        expected_outcome="denied",
+        reason="cursor replay/tampering must not leak or skip into another run scope",
+    ),
+    AdversarialDebuggerCase(
+        scenario="cross_tenant_history",
+        expected_outcome="denied",
+        reason="history, checkpoints, traces, and replay artifacts remain tenant scoped",
     ),
 )

@@ -50,10 +50,23 @@ export type TaskSummary = {
 
 export type ExecutionEvent = {
   id: string;
+  run_id: string;
+  task_id: string | null;
   event_type: string;
+  schema_version: number;
   sequence: number;
   aggregate_type: string;
+  aggregate_id: string;
+  actor_id: string;
+  causation_id: string | null;
+  correlation_id: string;
   payload: Record<string, unknown>;
+  trace_context: Record<string, unknown>;
+  sanitized_diff: Record<string, unknown>;
+  retention_class: string;
+  payload_hash: string | null;
+  catalog_known: boolean;
+  created_at: string;
 };
 
 export type WorkerState = {
@@ -285,6 +298,72 @@ export type EvaluationRun = {
   case_results: EvaluationCaseResult[];
   metrics: EvaluationMetric[];
   exports: EvaluationExport[];
+};
+
+export type DebugProjectionVerification = {
+  id: string;
+  run_id: string;
+  status: string;
+  checked_event_count: number;
+  expected_run_status: string;
+  actual_run_status: string;
+  expected_task_statuses: Record<string, unknown>;
+  actual_task_statuses: Record<string, unknown>;
+  mismatch_count: number;
+  mismatches: Record<string, unknown>[];
+  created_by: string;
+  created_at: string;
+};
+
+export type DebugReplaySession = {
+  id: string;
+  source_run_id: string;
+  mode: string;
+  status: string;
+  policy: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  completed_at: string | null;
+  artifacts: {
+    id: string;
+    artifact_type: string;
+    payload: Record<string, unknown>;
+    created_at: string;
+  }[];
+};
+
+export type DebugTraceExport = {
+  id: string;
+  run_id: string;
+  exporter: string;
+  status: string;
+  live_export: boolean;
+  artifact: Record<string, unknown>;
+  error_message: string | null;
+  created_by: string;
+  created_at: string;
+};
+
+export type DebuggerSnapshot = {
+  run: RunSummary;
+  tasks: TaskSummary[];
+  event_catalog: Record<string, unknown>[];
+  timeline: {
+    events: ExecutionEvent[];
+    next_cursor: string | null;
+    has_more: boolean;
+  };
+  model_calls: ModelCall[];
+  tool_invocations: ToolInvocation[];
+  evidence_items: EvidenceItem[];
+  agent_iterations: AgentIteration[];
+  forge_checkpoints: Record<string, unknown>[];
+  engine_checkpoints: EngineCheckpoint[];
+  projection_verification: DebugProjectionVerification | null;
+  replay_sessions: DebugReplaySession[];
+  trace_exports: DebugTraceExport[];
+  security_posture: Record<string, boolean>;
 };
 
 async function parseProblem(response: Response): Promise<Error> {
@@ -662,6 +741,86 @@ export async function runOfflineEvaluation(
   }
   const payload = (await response.json()) as { evaluation_run: EvaluationRun };
   return payload.evaluation_run;
+}
+
+export async function getDebuggerSnapshot(
+  token: string,
+  runId: string
+): Promise<DebuggerSnapshot> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/debugger`, {
+    cache: "no-store",
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { debugger: DebuggerSnapshot };
+  return payload.debugger;
+}
+
+export async function verifyProjection(
+  token: string,
+  runId: string
+): Promise<DebugProjectionVerification> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/debugger/projection-verifications`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Idempotency-Key": `debug-projection-${Date.now()}`
+    }
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as {
+    projection_verification: DebugProjectionVerification;
+  };
+  return payload.projection_verification;
+}
+
+export async function createDebugReplay(
+  token: string,
+  runId: string,
+  mode: "simulation" | "effect_replay"
+): Promise<DebugReplaySession> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/debugger/replays`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `debug-replay-${mode}-${Date.now()}`
+    },
+    body: JSON.stringify({ mode })
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { replay_session: DebugReplaySession };
+  return payload.replay_session;
+}
+
+export async function createTraceExport(
+  token: string,
+  runId: string,
+  mode: "local" | "disabled" | "enabled" = "local"
+): Promise<DebugTraceExport> {
+  const response = await fetch(`${API_BASE_URL}/v1/runs/${runId}/debugger/trace-exports`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `debug-trace-export-${mode}-${Date.now()}`
+    },
+    body: JSON.stringify({ exporter: "langsmith", mode })
+  });
+  if (!response.ok) {
+    throw await parseProblem(response);
+  }
+  const payload = (await response.json()) as { trace_export: DebugTraceExport };
+  return payload.trace_export;
 }
 
 export async function requeueDeadLetter(token: string, deadLetterId: string): Promise<RunSummary> {

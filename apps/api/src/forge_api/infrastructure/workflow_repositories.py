@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from typing import Any
 
 from psycopg import Connection
@@ -42,12 +43,14 @@ class EventRepository:
             (tenant_id, run_id),
         ).fetchone()
         sequence = int(row["sequence"] if row is not None else 1)
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         event = self.conn.execute(
             """
             insert into execution_events
               (id, tenant_id, workspace_id, run_id, task_id, aggregate_type, aggregate_id,
-               event_type, sequence, actor_id, correlation_id, payload)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               event_type, sequence, actor_id, correlation_id, payload, schema_version,
+               payload_hash, trace_context, sanitized_diff)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s, %s)
             returning id, sequence, event_type, payload, created_at
             """,
             (
@@ -62,7 +65,10 @@ class EventRepository:
                 sequence,
                 actor_id,
                 str(uuid7()),
-                json.dumps(payload),
+                payload_json,
+                sha256(payload_json.encode("utf-8")).hexdigest(),
+                json.dumps({}),
+                json.dumps({}),
             ),
         ).fetchone()
         assert event is not None
@@ -517,7 +523,8 @@ class RunRepository:
         rows = self.conn.execute(
             """
             select id, run_id, task_id, aggregate_type, aggregate_id, event_type, sequence,
-                   actor_id, payload, created_at
+                   actor_id, payload, schema_version, trace_context, sanitized_diff,
+                   retention_class, payload_hash, correlation_id, causation_id, created_at
             from execution_events
             where run_id = %s
             order by sequence
@@ -532,9 +539,16 @@ class RunRepository:
                 "aggregate_type": str(row["aggregate_type"]),
                 "aggregate_id": str(row["aggregate_id"]),
                 "event_type": str(row["event_type"]),
+                "schema_version": int(row["schema_version"]),
                 "sequence": int(row["sequence"]),
                 "actor_id": str(row["actor_id"]),
-                "payload": row["payload"],
+                "correlation_id": str(row["correlation_id"]),
+                "causation_id": str(row["causation_id"]) if row["causation_id"] else None,
+                "trace_context": row["trace_context"],
+                "sanitized_diff": row["sanitized_diff"],
+                "retention_class": str(row["retention_class"]),
+                "payload_hash": str(row["payload_hash"]) if row["payload_hash"] else None,
+                "payload": sanitize_payload(row["payload"]),
                 "created_at": row["created_at"].isoformat(),
             }
             for row in rows
