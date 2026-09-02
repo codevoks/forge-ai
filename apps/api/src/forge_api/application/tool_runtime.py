@@ -1,8 +1,10 @@
 from typing import Any
 
 from forge_api.api.errors import ProblemError
+from forge_api.application.budget_service import BudgetService
 from forge_api.application.mcp_tool_adapter import MCPOutcomeUnknownError, MCPToolAdapter
 from forge_api.domain.approvals import ApprovalPolicy, ApprovalRequiredError
+from forge_api.domain.budgets import BudgetEstimate
 from forge_api.domain.tools import (
     InvocationStatus,
     ToolContract,
@@ -18,6 +20,8 @@ from forge_api.infrastructure.tool_repositories import (
     ToolInvocationRepository,
     ToolRegistryRepository,
 )
+
+TOOL_CALL_ESTIMATE = BudgetEstimate(requests=1, tokens=64, currency_minor=0)
 
 
 class ToolPolicy:
@@ -125,6 +129,7 @@ class ToolRuntime:
         self.approvals = ToolApprovalPolicy()
         self.adapter = DeterministicToolAdapter()
         self.mcp_adapter = MCPToolAdapter(database=database)
+        self.budgets = BudgetService(database=database)
 
     def invoke_for_claim(self, claim: dict[str, Any]) -> dict[str, Any]:
         task_input = claim.get("input", {})
@@ -206,6 +211,17 @@ class ToolRuntime:
         if approval_required_id is not None:
             raise ApprovalRequiredError(approval_required_id)
 
+        reservation = self.budgets.reserve(
+            tenant_id=str(claim["tenant_id"]),
+            workspace_id=str(claim["workspace_id"]),
+            run_id=str(claim["run_id"]),
+            task_id=str(claim["task_id"]),
+            worker_id=str(claim["worker_id"]),
+            operation=f"tool:{tool_name}",
+            estimate=TOOL_CALL_ESTIMATE,
+            created_by=str(claim["actor_id"]),
+        )
+
         adapter = self.mcp_adapter if registry_tool["origin"] == "mcp" else self.adapter
         try:
             output = adapter.invoke(
@@ -216,6 +232,12 @@ class ToolRuntime:
             )
             validated_output = tool_definition.validate_output(output)
         except ProblemError as exc:
+            self.budgets.release(
+                reservation_id=str(reservation["id"]),
+                tenant_id=str(claim["tenant_id"]),
+                workspace_id=str(claim["workspace_id"]),
+                worker_id=str(claim["worker_id"]),
+            )
             with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
                 ToolInvocationRepository(conn).mark_failed(
                     invocation_id=str(invocation["id"]),
@@ -225,6 +247,13 @@ class ToolRuntime:
                 )
             raise
         except (OutcomeUnknownToolError, MCPOutcomeUnknownError) as exc:
+            self.budgets.settle(
+                reservation_id=str(reservation["id"]),
+                tenant_id=str(claim["tenant_id"]),
+                workspace_id=str(claim["workspace_id"]),
+                worker_id=str(claim["worker_id"]),
+                actual=TOOL_CALL_ESTIMATE,
+            )
             with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
                 ToolInvocationRepository(conn).mark_failed(
                     invocation_id=str(invocation["id"]),
@@ -238,6 +267,13 @@ class ToolRuntime:
                 "Tool outcome is unknown and requires operator reconciliation.",
             ) from exc
 
+        self.budgets.settle(
+            reservation_id=str(reservation["id"]),
+            tenant_id=str(claim["tenant_id"]),
+            workspace_id=str(claim["workspace_id"]),
+            worker_id=str(claim["worker_id"]),
+            actual=TOOL_CALL_ESTIMATE,
+        )
         provider_operation_id = validated_output.get("provider_operation_id")
         with self.database.transaction(worker_id=str(claim["worker_id"])) as conn:
             invocation_repo = ToolInvocationRepository(conn)

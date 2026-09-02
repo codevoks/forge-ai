@@ -8,6 +8,7 @@ from forge_api.config import Settings
 from forge_api.domain.identity import ActorContext
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.oidc import LocalJwksIdentityProvider
+from forge_api.ports.telemetry import TelemetryPort
 
 
 def get_settings(request: Request) -> Settings:
@@ -19,6 +20,14 @@ def get_settings(request: Request) -> Settings:
 
 def get_database(settings: Annotated[Settings, Depends(get_settings)]) -> Database:
     return Database(settings.database_url)
+
+
+def get_telemetry(request: Request) -> TelemetryPort:
+    telemetry = request.app.state.telemetry
+    if telemetry is None:
+        raise ProblemError(500, "telemetry_unavailable", "Application telemetry is unavailable.")
+    telemetry_port: TelemetryPort = telemetry
+    return telemetry_port
 
 
 def get_identity_provider(

@@ -6,6 +6,7 @@ from forge_api.api.rate_limit import LocalRateLimitMiddleware
 from forge_api.api.routes import (
     agents,
     approvals,
+    budgets,
     debugging,
     dev_oidc,
     engines,
@@ -23,6 +24,7 @@ from forge_api.api.routes import (
     workspaces,
 )
 from forge_api.config import Settings
+from forge_api.infrastructure.telemetry import ForgeTelemetry
 
 
 def create_app() -> FastAPI:
@@ -34,6 +36,7 @@ def create_app() -> FastAPI:
         redoc_url=None,
     )
     app.state.settings = settings
+    app.state.telemetry = ForgeTelemetry(settings=settings)
     app.add_middleware(LocalRateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -44,6 +47,7 @@ def create_app() -> FastAPI:
     )
     install_error_handlers(app)
     app.include_router(agents.router)
+    app.include_router(budgets.router)
     app.include_router(engines.router)
     app.include_router(evaluations.router)
     app.include_router(debugging.router)

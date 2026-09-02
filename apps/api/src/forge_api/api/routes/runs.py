@@ -3,10 +3,16 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from forge_api.api.dependencies import get_actor, get_database, require_idempotency_key
+from forge_api.api.dependencies import (
+    get_actor,
+    get_database,
+    get_telemetry,
+    require_idempotency_key,
+)
 from forge_api.application.run_service import RunService
 from forge_api.domain.identity import ActorContext
 from forge_api.infrastructure.database import Database
+from forge_api.ports.telemetry import TelemetryPort
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
 
@@ -38,8 +44,9 @@ def create_run(
     actor: Annotated[ActorContext, Depends(get_actor)],
     database: Annotated[Database, Depends(get_database)],
     idempotency_key: Annotated[str, Depends(require_idempotency_key)],
+    telemetry: Annotated[TelemetryPort, Depends(get_telemetry)],
 ) -> dict[str, object]:
-    return RunService(database).create(
+    return RunService(database, telemetry=telemetry).create(
         actor,
         idempotency_key,
         payload.model_dump(),

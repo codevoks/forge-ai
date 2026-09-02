@@ -16,13 +16,16 @@ from forge_api.domain.workflow_engine import (
 )
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.repositories import IdempotencyRepository, canonical_hash
+from forge_api.infrastructure.telemetry import NullTelemetry
 from forge_api.infrastructure.workflow_repositories import RunRepository, WorkflowRepository
 from forge_api.policy.authorization import AuthorizationService
+from forge_api.ports.telemetry import TelemetryPort
 
 
 class RunService:
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, *, telemetry: TelemetryPort | None = None) -> None:
         self.database = database
+        self.telemetry = telemetry or NullTelemetry()
 
     def create(
         self,
@@ -88,20 +91,24 @@ class RunService:
                     objective=str(payload["objective"]),
                 )
                 strategy_metadata = {"routing_decision": routing_decision.model_dump(mode="json")}
-            run = RunRepository(conn).create_run(
-                tenant_id=tenant_id,
-                workspace_id=workspace_id,
-                actor_id=actor.user_id,
-                workflow_version=workflow_version,
-                objective=str(payload["objective"]),
-                constraints=dict(payload.get("constraints", {})),
-                engine_kind=engine_kind.value,
-                engine_version=engine_version_for(engine_kind),
-                engine_metadata=engine_metadata.model_dump(mode="json"),
-                strategy_kind=strategy_kind.value,
-                strategy_version=strategy_version_for(strategy_kind),
-                strategy_metadata=strategy_metadata,
-            )
+            with self.telemetry.span(
+                "run.create", attributes={"workspace_id": workspace_id}
+            ) as trace_context:
+                run = RunRepository(conn).create_run(
+                    tenant_id=tenant_id,
+                    workspace_id=workspace_id,
+                    actor_id=actor.user_id,
+                    workflow_version=workflow_version,
+                    objective=str(payload["objective"]),
+                    constraints=dict(payload.get("constraints", {})),
+                    engine_kind=engine_kind.value,
+                    engine_version=engine_version_for(engine_kind),
+                    engine_metadata=engine_metadata.model_dump(mode="json"),
+                    strategy_kind=strategy_kind.value,
+                    strategy_version=strategy_version_for(strategy_kind),
+                    strategy_metadata=strategy_metadata,
+                    trace_context=dict(trace_context) if trace_context else None,
+                )
             response = {"run": run}
             idempotency.save(
                 scope=scope,

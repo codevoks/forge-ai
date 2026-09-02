@@ -367,4 +367,7 @@ def test_queue_envelope_payload_contains_only_durable_ids(
         envelope = OutboxRepository(conn).due_unpublished(limit=1)[0]
 
     assert isinstance(envelope, JobEnvelope)
-    assert set(envelope.payload) == {"actor_id", "run_id", "task_id"}
+    assert {"actor_id", "run_id", "task_id"} <= set(envelope.payload)
+    assert set(envelope.payload) <= {"actor_id", "run_id", "task_id", "trace_context"}
+    if "trace_context" in envelope.payload:
+        assert set(envelope.payload["trace_context"]) <= {"traceparent", "tracestate"}

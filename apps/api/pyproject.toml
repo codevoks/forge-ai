@@ -3,24 +3,27 @@ name = "forge-api"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-  "cryptography==45.0.6",
-  "fastapi==0.116.1",
+  "cryptography==50.0.0",
+  "fastapi==0.141.1",
   "httpx==0.28.1",
   "langchain==1.3.18",
   "langgraph==1.2.11",
+  "opentelemetry-exporter-otlp-proto-http==1.44.0",
+  "opentelemetry-sdk==1.44.0",
   "psycopg[binary]==3.2.9",
   "pydantic-settings==2.10.1",
-  "pyjwt==2.10.1",
-  "python-multipart==0.0.20",
+  "pyjwt==2.13.0",
+  "python-multipart==0.0.32",
   "redis==5.2.1",
+  "starlette==1.6.0",
   "uvicorn[standard]==0.35.0"
 ]
 
 [dependency-groups]
 dev = [
   "mypy==1.17.1",
-  "pytest==8.4.1",
-  "pytest-cov==6.2.1",
+  "pytest==9.1.1",
+  "pytest-cov==7.1.0",
   "ruff==0.12.9"
 ]
 
@@ -50,4 +53,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["langchain", "langchain.*", "langchain_core", "langchain_core.*", "langsmith", "langsmith.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["opentelemetry", "opentelemetry.*"]
 ignore_missing_imports = true

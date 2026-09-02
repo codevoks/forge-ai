@@ -7,8 +7,15 @@ from forge_api.application.tool_runtime import ToolRuntime
 from forge_api.domain.approvals import ApprovalRequiredError
 from forge_api.domain.reliability import JobEnvelope, RetryPolicy, sanitize_payload
 from forge_api.infrastructure.database import Database
-from forge_api.infrastructure.workflow_repositories import OutboxRepository, WorkerRepository
+from forge_api.infrastructure.telemetry import NullTelemetry
+from forge_api.infrastructure.workflow_repositories import (
+    EventRepository,
+    OutboxRepository,
+    WorkerRepository,
+    correlation_id_from_trace_context,
+)
 from forge_api.ports.queue import QueuePort
+from forge_api.ports.telemetry import TelemetryPort
 
 
 class OutboxDispatcher:
@@ -90,12 +97,14 @@ class WorkerConsumer:
         worker_id: str,
         lease_seconds: int,
         retry_policy: RetryPolicy,
+        telemetry: TelemetryPort | None = None,
     ) -> None:
         self.database = database
         self.queue = queue
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.retry_policy = retry_policy
+        self.telemetry = telemetry or NullTelemetry()
         self.executor = DeterministicTaskExecutor(
             tool_runtime=ToolRuntime(database=database),
             agent_runtime=AgentRuntime(database=database),
@@ -123,47 +132,63 @@ class WorkerConsumer:
                 self.queue.ack(message_id=envelope.message_id)
                 return "skipped"
 
-        try:
-            result = self.executor.execute(claim)
-        except RetryableExecutionError as exc:
-            self._fail_claim(
-                envelope=envelope,
-                claim=claim,
-                actor_id=actor_id,
-                error_type="transient",
-                error_message=str(exc),
+        parent_trace_context = envelope.payload.get("trace_context")
+        if not isinstance(parent_trace_context, dict):
+            parent_trace_context = None
+
+        with self.telemetry.span(
+            "task.execute",
+            attributes={
+                "task_id": claim.get("task_id"),
+                "run_id": claim.get("run_id"),
+                "kind": claim.get("kind"),
+            },
+            parent_trace_context=parent_trace_context,
+        ) as trace_context:
+            self._record_trace_correlation(
+                claim=claim, actor_id=actor_id, trace_context=trace_context
             )
-            self.queue.ack(message_id=envelope.message_id)
-            return "retry_scheduled"
-        except PermanentExecutionError as exc:
-            self._fail_claim(
-                envelope=envelope,
-                claim=claim,
-                actor_id=actor_id,
-                error_type="permanent",
-                error_message=str(exc),
-            )
-            self.queue.ack(message_id=envelope.message_id)
-            return "dead_lettered"
-        except ApprovalRequiredError:
-            with self.database.transaction(worker_id=self.worker_id) as conn:
-                WorkerRepository(conn, lease_seconds=self.lease_seconds).finish_inbox(
+            try:
+                result = self.executor.execute(claim)
+            except RetryableExecutionError as exc:
+                self._fail_claim(
                     envelope=envelope,
-                    handler_name=handler_name,
-                    status="succeeded",
+                    claim=claim,
+                    actor_id=actor_id,
+                    error_type="transient",
+                    error_message=str(exc),
                 )
-            self.queue.ack(message_id=envelope.message_id)
-            return "waiting_approval"
-        except ProblemError as exc:
-            self._fail_claim(
-                envelope=envelope,
-                claim=claim,
-                actor_id=actor_id,
-                error_type=exc.code,
-                error_message=exc.message,
-            )
-            self.queue.ack(message_id=envelope.message_id)
-            return "policy_denied"
+                self.queue.ack(message_id=envelope.message_id)
+                return "retry_scheduled"
+            except PermanentExecutionError as exc:
+                self._fail_claim(
+                    envelope=envelope,
+                    claim=claim,
+                    actor_id=actor_id,
+                    error_type="permanent",
+                    error_message=str(exc),
+                )
+                self.queue.ack(message_id=envelope.message_id)
+                return "dead_lettered"
+            except ApprovalRequiredError:
+                with self.database.transaction(worker_id=self.worker_id) as conn:
+                    WorkerRepository(conn, lease_seconds=self.lease_seconds).finish_inbox(
+                        envelope=envelope,
+                        handler_name=handler_name,
+                        status="succeeded",
+                    )
+                self.queue.ack(message_id=envelope.message_id)
+                return "waiting_approval"
+            except ProblemError as exc:
+                self._fail_claim(
+                    envelope=envelope,
+                    claim=claim,
+                    actor_id=actor_id,
+                    error_type=exc.code,
+                    error_message=exc.message,
+                )
+                self.queue.ack(message_id=envelope.message_id)
+                return "policy_denied"
 
         with self.database.transaction(worker_id=self.worker_id) as conn:
             worker = WorkerRepository(conn, lease_seconds=self.lease_seconds)
@@ -175,6 +200,26 @@ class WorkerConsumer:
             )
         self.queue.ack(message_id=envelope.message_id)
         return "succeeded" if completed else "stale_fence"
+
+    def _record_trace_correlation(
+        self, *, claim: dict[str, Any], actor_id: str, trace_context: dict[str, str]
+    ) -> None:
+        if not trace_context:
+            return
+        with self.database.transaction(worker_id=self.worker_id) as conn:
+            EventRepository(conn).append(
+                tenant_id=str(claim["tenant_id"]),
+                workspace_id=str(claim["workspace_id"]),
+                run_id=str(claim["run_id"]),
+                task_id=str(claim["task_id"]),
+                aggregate_type="task",
+                aggregate_id=str(claim["task_id"]),
+                event_type="task.trace_correlated",
+                actor_id=actor_id,
+                payload={"span_name": "task.execute"},
+                trace_context=dict(trace_context),
+                correlation_id=correlation_id_from_trace_context(dict(trace_context)),
+            )
 
     def _fail_claim(
         self,

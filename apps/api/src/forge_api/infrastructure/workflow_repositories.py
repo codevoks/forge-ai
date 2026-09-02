@@ -17,6 +17,26 @@ from forge_api.infrastructure.ids import uuid7
 from forge_api.infrastructure.tool_repositories import RunToolGrantRepository
 
 
+def correlation_id_from_trace_context(trace_context: dict[str, Any] | None) -> str | None:
+    """W3C `traceparent` is `{version}-{32 hex trace-id}-{16 hex span-id}-{flags}`;
+    reformat the trace-id segment as a UUID so it can be stored directly in
+    `execution_events.correlation_id`, giving every event in one OTel trace
+    a shared Forge correlation id without coupling this module to the OTel SDK."""
+    if not trace_context:
+        return None
+    traceparent = trace_context.get("traceparent")
+    if not isinstance(traceparent, str):
+        return None
+    parts = traceparent.split("-")
+    if len(parts) != 4 or len(parts[1]) != 32:
+        return None
+    trace_id_hex = parts[1]
+    return (
+        f"{trace_id_hex[0:8]}-{trace_id_hex[8:12]}-{trace_id_hex[12:16]}-"
+        f"{trace_id_hex[16:20]}-{trace_id_hex[20:32]}"
+    )
+
+
 class EventRepository:
     def __init__(self, conn: Connection[dict[str, Any]]) -> None:
         self.conn = conn
@@ -33,6 +53,8 @@ class EventRepository:
         event_type: str,
         actor_id: str,
         payload: dict[str, Any],
+        trace_context: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
     ) -> dict[str, Any]:
         row = self.conn.execute(
             """
@@ -64,10 +86,10 @@ class EventRepository:
                 event_type,
                 sequence,
                 actor_id,
-                str(uuid7()),
+                correlation_id if correlation_id is not None else str(uuid7()),
                 payload_json,
                 sha256(payload_json.encode("utf-8")).hexdigest(),
-                json.dumps({}),
+                json.dumps(trace_context if trace_context is not None else {}),
                 json.dumps({}),
             ),
         ).fetchone()
@@ -88,7 +110,11 @@ class OutboxRepository:
         task_id: str,
         actor_id: str,
         stream_name: str = "forge:work",
+        trace_context: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        payload: dict[str, Any] = {"run_id": run_id, "task_id": task_id, "actor_id": actor_id}
+        if trace_context:
+            payload["trace_context"] = trace_context
         return self.conn.execute(
             """
             insert into outbox_messages
@@ -106,7 +132,7 @@ class OutboxRepository:
                 task_id,
                 stream_name,
                 f"{tenant_id}:{run_id}",
-                json.dumps({"run_id": run_id, "task_id": task_id, "actor_id": actor_id}),
+                json.dumps(payload),
             ),
         ).fetchone()
 
@@ -350,6 +376,7 @@ class RunRepository:
         strategy_kind: str = "single_agentic",
         strategy_version: str = "single-agentic-v1",
         strategy_metadata: dict[str, Any] | None = None,
+        trace_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         objective_id = str(uuid7())
         run_id = str(uuid7())
@@ -443,6 +470,7 @@ class RunRepository:
             actor_id=actor_id,
             workflow_version=workflow_version,
         )
+        correlation_id = correlation_id_from_trace_context(trace_context)
         self.events.append(
             tenant_id=tenant_id,
             workspace_id=workspace_id,
@@ -453,14 +481,32 @@ class RunRepository:
             event_type="run.created",
             actor_id=actor_id,
             payload={"workflow_version_id": workflow_version["id"], "objective_id": objective_id},
+            trace_context=trace_context,
+            correlation_id=correlation_id,
         )
         self._start_run(
-            run_id=run_id, tenant_id=tenant_id, workspace_id=workspace_id, actor_id=actor_id
+            run_id=run_id,
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            actor_id=actor_id,
+            trace_context=trace_context,
+            correlation_id=correlation_id,
         )
-        self.mark_newly_ready_tasks(run_id=run_id, actor_id=actor_id)
+        self.mark_newly_ready_tasks(
+            run_id=run_id, actor_id=actor_id, trace_context=trace_context
+        )
         return self.get_run_for_actor(actor_id=actor_id, run_id=run_id)
 
-    def _start_run(self, *, run_id: str, tenant_id: str, workspace_id: str, actor_id: str) -> None:
+    def _start_run(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+        workspace_id: str,
+        actor_id: str,
+        trace_context: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
         self.conn.execute(
             """
             update runs
@@ -482,6 +528,8 @@ class RunRepository:
             event_type="run.running",
             actor_id=actor_id,
             payload={},
+            trace_context=trace_context,
+            correlation_id=correlation_id,
         )
 
     def list_runs_for_actor(self, *, actor_id: str) -> list[dict[str, Any]]:
@@ -712,7 +760,9 @@ class RunRepository:
         )
         return self.get_run_for_actor(actor_id=actor_id, run_id=str(row["run_id"]))
 
-    def mark_newly_ready_tasks(self, *, run_id: str, actor_id: str) -> list[dict[str, Any]]:
+    def mark_newly_ready_tasks(
+        self, *, run_id: str, actor_id: str, trace_context: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         run_row = self._run_row_for_update(run_id)
         if str(run_row["status"]) != RunStatus.RUNNING.value:
             return []
@@ -755,6 +805,8 @@ class RunRepository:
                 event_type="task.ready",
                 actor_id=actor_id,
                 payload={"step_key": str(row["step_key"])},
+                trace_context=trace_context,
+                correlation_id=correlation_id_from_trace_context(trace_context),
             )
             self.outbox.add_task_execution_requested(
                 tenant_id=str(row["tenant_id"]),
@@ -762,6 +814,7 @@ class RunRepository:
                 run_id=str(row["run_id"]),
                 task_id=str(row["id"]),
                 actor_id=actor_id,
+                trace_context=trace_context,
             )
             updated.append(row)
         return updated

@@ -14,7 +14,7 @@ if (!existsSync(".venv/bin/python")) {
 
 const python = ".venv/bin/python";
 
-run(python, ["-m", "pip", "install", "--upgrade", "pip"]);
+run(python, ["-m", "pip", "install", "--upgrade", "pip", "setuptools"]);
 run(python, [
   "-m",
   "pip",
@@ -24,8 +24,8 @@ run(python, [
   "-e",
   "apps/worker",
   "mypy==1.17.1",
-  "pytest==8.4.1",
-  "pytest-cov==6.2.1",
+  "pytest==9.1.1",
+  "pytest-cov==7.1.0",
   "redis==5.2.1",
   "ruff==0.12.9"
 ]);

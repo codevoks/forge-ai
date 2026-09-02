@@ -20,6 +20,20 @@ from forge_api.infrastructure.ids import uuid7
 from forge_api.infrastructure.workflow_repositories import RunRepository
 
 
+def _trace_id_from_context(trace_context: dict[str, Any] | None) -> str | None:
+    """Extract the 32-hex OTel trace id from a sanitized W3C `traceparent`,
+    matching the raw-hex format the local JSONL span exporter records."""
+    if not trace_context:
+        return None
+    traceparent = trace_context.get("traceparent")
+    if not isinstance(traceparent, str):
+        return None
+    parts = traceparent.split("-")
+    if len(parts) != 4 or len(parts[1]) != 32:
+        return None
+    return parts[1]
+
+
 def encode_event_cursor(*, run_id: str, sequence: int) -> str:
     payload = json.dumps(
         {"run_id": run_id, "sequence": sequence},
@@ -351,6 +365,8 @@ class DebuggerRepository:
                         "sequence": event["sequence"],
                         "event_type": event["event_type"],
                         "payload_hash": event["payload_hash"],
+                        "correlation_id": event["correlation_id"],
+                        "trace_id": _trace_id_from_context(event["trace_context"]),
                     }
                     for event in feed["events"]
                 ],

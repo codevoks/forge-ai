@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -38,7 +38,7 @@ class LocalJwksIdentityProvider:
                 options={"require": ["exp", "iat", "nbf", "iss", "aud", "sub"]},
                 leeway=5,
             )
-            return cast(dict[str, Any], decoded)
+            return decoded
         except jwt.ExpiredSignatureError as exc:
             raise ProblemError(401, "token_expired", "The access token has expired.") from exc
         except jwt.InvalidTokenError as exc:

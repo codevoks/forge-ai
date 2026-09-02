@@ -10,6 +10,7 @@ from forge_api.config import Settings
 from forge_api.domain.reliability import RetryPolicy
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.queue import RedisStreamQueue
+from forge_api.infrastructure.telemetry import ForgeTelemetry
 
 
 def health() -> dict[str, str]:
@@ -33,12 +34,14 @@ def main() -> None:
         group_name=settings.queue_group,
     )
     dispatcher = OutboxDispatcher(database=database, queue=queue, worker_id=settings.worker_id)
+    telemetry = ForgeTelemetry(settings=settings)
     consumer = WorkerConsumer(
         database=database,
         queue=queue,
         worker_id=settings.worker_id,
         lease_seconds=settings.task_lease_seconds,
         retry_policy=RetryPolicy(max_attempts=settings.task_max_attempts),
+        telemetry=telemetry,
     )
     recovery = RecoveryService(database=database, worker_id=settings.worker_id)
     should_stop = False
@@ -69,6 +72,7 @@ def main() -> None:
         if outcome == "idle" and dispatched == 0 and not any(recovered.values()):
             time.sleep(settings.worker_tick_seconds)
 
+    telemetry.shutdown()
     print("worker shutdown requested", flush=True)
 
 

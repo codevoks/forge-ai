@@ -12,6 +12,7 @@ from forge_api.domain.reliability import RetryPolicy
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.dev_issuer import DevIssuer
 from forge_api.infrastructure.queue import InMemoryQueue
+from forge_api.infrastructure.telemetry import ForgeTelemetry
 
 
 def headers(issuer: DevIssuer, subject: str = "alice", key: str | None = None) -> dict[str, str]:
@@ -294,6 +295,69 @@ def test_local_trace_export_correlates_events_models_tools_and_checkpoints(
     assert artifact["model_call_refs"]
     assert artifact["tool_invocation_refs"]
     assert artifact["langgraph_checkpoint_refs"]
+
+
+def test_trace_export_surfaces_real_otel_trace_ids_when_telemetry_is_wired(
+    client: TestClient,
+    issuer: DevIssuer,
+    database: Database,
+    settings: Settings,
+) -> None:
+    workflow = workflow_by_name(client, issuer, "Typed Tool Demo")
+    created = client.post(
+        "/v1/runs",
+        headers=headers(issuer, key=f"trace-id-run-{uuid4()}"),
+        json={
+            "workspace_id": workflow["workspace_id"],
+            "workflow_version_id": workflow["id"],
+            "objective": "Exercise real OTel trace ids in the local trace-export artifact.",
+        },
+    ).json()["run"]
+
+    queue = InMemoryQueue()
+    dispatcher = OutboxDispatcher(database=database, queue=queue, worker_id=settings.worker_id)
+    consumer = WorkerConsumer(
+        database=database,
+        queue=queue,
+        worker_id=settings.worker_id,
+        lease_seconds=settings.task_lease_seconds,
+        retry_policy=RetryPolicy(max_attempts=settings.task_max_attempts),
+        telemetry=ForgeTelemetry(settings=settings),
+    )
+    run: dict[str, Any] = {}
+    for _ in range(80):
+        dispatcher.dispatch_once()
+        outcome = consumer.consume_once(block_ms=0)
+        if outcome == "waiting_approval":
+            for approval in client.get(
+                "/v1/approvals", headers=headers(issuer, "ava")
+            ).json()["approval_requests"]:
+                if approval["status"] != "pending":
+                    continue
+                client.post(
+                    f"/v1/approvals/{approval['id']}:approve",
+                    headers=headers(issuer, "ava", key=f"trace-id-approve-{uuid4()}")
+                    | {"If-Match": str(approval["request_version"])},
+                    json={"reason": "Exercising real OTel trace ids."},
+                )
+        run = client.get(f"/v1/runs/{created['id']}", headers=headers(issuer)).json()["run"]
+        if run["status"] in {"succeeded", "failed", "cancelled"}:
+            break
+    assert run["status"] == "succeeded"
+
+    response = client.post(
+        f"/v1/runs/{created['id']}/debugger/trace-exports",
+        headers=headers(issuer, key=f"trace-export-langfuse-{uuid4()}"),
+        json={"exporter": "langfuse", "mode": "local"},
+    )
+    assert response.status_code == 201
+    trace_export = response.json()["trace_export"]
+    assert trace_export["exporter"] == "langfuse"
+    event_refs = trace_export["artifact"]["event_refs"]
+    trace_ids = {ref["trace_id"] for ref in event_refs if ref["trace_id"] is not None}
+    assert trace_ids, "expected at least one event carrying a real OTel trace id"
+    for trace_id in trace_ids:
+        assert len(trace_id) == 32
 
 
 @pytest.mark.security

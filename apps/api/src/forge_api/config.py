@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     langsmith_export_mode: Literal["local", "disabled", "enabled"] = "local"
     langsmith_endpoint: str = "https://api.smith.langchain.com"
     langsmith_api_key: str = ""
+    telemetry_export_mode: Literal["local", "disabled", "enabled"] = "local"
+    telemetry_local_export_path: Path = Field(default=Path("local/telemetry/spans.jsonl"))
+    telemetry_otlp_endpoint: str = ""
+    telemetry_otlp_headers: str = ""
     oidc_issuer: str = "http://forge.local/oidc"
     oidc_audience: str = "forge-local"
     oidc_jwks_path: Path = Field(default=Path("local/jwks.json"))
@@ -39,3 +43,5 @@ class Settings(BaseSettings):
             )
         if self.langsmith_export_mode == "enabled":
             raise RuntimeError("Default Forge commands cannot enable external LangSmith export.")
+        if self.telemetry_export_mode == "enabled":
+            raise RuntimeError("Default Forge commands cannot enable external telemetry export.")

@@ -195,7 +195,7 @@ class DebuggingService:
         actor: ActorContext,
         run_id: str,
         *,
-        exporter: Literal["local", "langsmith"],
+        exporter: Literal["local", "langsmith", "langfuse"],
         mode: Literal["local", "disabled", "enabled"],
         idempotency_key: str,
     ) -> dict[str, Any]:

@@ -24,9 +24,12 @@
     "demo:approvals": "pnpm --filter @forge/api demo:approvals",
     "demo:tools": "pnpm --filter @forge/api demo:tools",
     "demo:mcp": "pnpm --filter @forge/api demo:mcp",
-    "demo:multi-agent": "pnpm --filter @forge/api demo:multi-agent"
+    "demo:multi-agent": "pnpm --filter @forge/api demo:multi-agent",
+    "demo:recovery": "pnpm --filter @forge/api demo:recovery",
+    "capacity-report": "pnpm --filter @forge/api capacity-report",
+    "backup-restore-drill": "node scripts/backup-restore-drill.mjs"
   },
   "devDependencies": {
-    "turbo": "2.6.1"
+    "turbo": "2.10.12"
   }
 }

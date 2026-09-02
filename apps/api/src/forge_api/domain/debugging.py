@@ -76,6 +76,16 @@ EVENT_CATALOG: dict[str, DebugEventSchema] = {
         category="task",
         description="Worker claimed a task with a lease/fencing token.",
     ),
+    "task.trace_correlated": DebugEventSchema(
+        event_type="task.trace_correlated",
+        category="task",
+        description=(
+            "A real OTel W3C trace context was captured for this task attempt, "
+            "continuing the run's root trace when the enqueued work carried one."
+        ),
+        authoritative_for_projection=False,
+        payload_contract={"span_name": "string"},
+    ),
     "task.succeeded": DebugEventSchema(
         event_type="task.succeeded",
         category="task",

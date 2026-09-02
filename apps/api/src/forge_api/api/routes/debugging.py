@@ -16,7 +16,7 @@ class ReplayCreateRequest(BaseModel):
 
 
 class TraceExportCreateRequest(BaseModel):
-    exporter: Literal["local", "langsmith"] = "local"
+    exporter: Literal["local", "langsmith", "langfuse"] = "local"
     mode: Literal["local", "disabled", "enabled"] = "local"
 
 

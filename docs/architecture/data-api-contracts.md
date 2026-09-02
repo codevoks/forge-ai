@@ -7,7 +7,7 @@ The following are conceptual tables; migrations are introduced in the owning pha
 | Group | Records | Important constraints |
 |---|---|---|
 | Identity | tenants, workspaces, users, memberships, service_principals | composite tenant/workspace FKs; normalized external subject uniqueness |
-| Control | workflow_templates, workflow_versions, tool_definitions, tool_versions, integration_connections, policy_versions, budget_policies | immutable published versions; secrets stored only as references |
+| Control | workflow_templates, workflow_versions, tool_definitions, tool_versions, integration_connections, policy_versions, budget_policies, budget_usage_daily, budget_reservations | immutable published versions; secrets stored only as references; budgets reserve-before-work and settle-after (Phase 13) |
 | Execution | objectives, runs, plan_versions, tasks, task_dependencies, task_attempts, checkpoints | tenant scope, versions, one active attempt, DAG uniqueness |
 | AI/tools | model_calls, tool_invocations, evidence_items | provider-neutral status/usage; trust/provenance; payload size/retention |
 | Approval | approval_requests, approval_decisions | action hash, expiry, eligible actor, one terminal decision |
