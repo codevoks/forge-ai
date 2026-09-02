@@ -1441,6 +1441,7 @@ class WorkerRepository:
             for update skip locked
             """
         ).fetchall()
+        released_reservations = 0
         for row in expired:
             self.conn.execute(
                 "update task_attempts set status = 'abandoned', completed_at = now() where id = %s",
@@ -1454,6 +1455,43 @@ class WorkerRepository:
                 """,
                 (row["task_id"],),
             )
+            # A worker crash between BudgetService.reserve() and settle()/release()
+            # leaves the reservation permanently 'reserved' and its usage
+            # permanently counted, even though the abandoned attempt's work
+            # never completed and a retry will reserve again for the same
+            # logical unit of work. Reclaim it here, in the same transaction
+            # that reclaims the stale attempt, so budget usage never drifts
+            # from actually-completed work.
+            orphaned = self.conn.execute(
+                """
+                update budget_reservations
+                set status = 'released', settled_at = now()
+                where task_id = %s and status = 'reserved'
+                returning tenant_id, workspace_id, usage_date,
+                          estimated_requests, estimated_tokens, estimated_currency_minor
+                """,
+                (row["task_id"],),
+            ).fetchall()
+            for reservation in orphaned:
+                self.conn.execute(
+                    """
+                    update budget_usage_daily
+                    set requests_used = greatest(0, requests_used - %s),
+                        tokens_used = greatest(0, tokens_used - %s),
+                        currency_minor_used = greatest(0, currency_minor_used - %s),
+                        updated_at = now()
+                    where tenant_id = %s and workspace_id = %s and usage_date = %s
+                    """,
+                    (
+                        reservation["estimated_requests"],
+                        reservation["estimated_tokens"],
+                        reservation["estimated_currency_minor"],
+                        reservation["tenant_id"],
+                        reservation["workspace_id"],
+                        reservation["usage_date"],
+                    ),
+                )
+            released_reservations += len(orphaned)
             self.events.append(
                 tenant_id=str(row["tenant_id"]),
                 workspace_id=str(row["workspace_id"]),
@@ -1539,6 +1577,7 @@ class WorkerRepository:
             "expired_leases": len(expired),
             "due_retries": len(due_retries),
             "republished_ready_tasks": republished,
+            "released_orphaned_reservations": released_reservations,
         }
 
     def _cancel_task(self, *, task_id: str, actor_id: str) -> None:

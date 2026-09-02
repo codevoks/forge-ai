@@ -17,3 +17,7 @@ This file keeps phase completion evidence auditable without exposing phase histo
 | Phase 11 — MCP interoperability | Complete; product gate passed after implementation, validation, and zero-cost demo | `docs/internal/phase-11-mcp-interoperability-report.md` | commit tagged `phase-11` | `phase-11`, verify on GitHub |
 | Phase 12 — Measured multi-agent patterns | Complete; product gate passed after implementation, validation, and zero-cost demo | `docs/internal/phase-12-multi-agent-patterns-report.md` | commit tagged `phase-12` | `phase-12`, verify on GitHub |
 | Phase 13 — Temporal decision, observability, budgets, and cloud hardening | Complete; product gate passed after implementation, validation, and zero-cost demo | `docs/internal/phase-13-temporal-observability-cloud-hardening-report.md` | commit tagged `phase-13` | `phase-13`, verify on GitHub |
+
+## Final whole-project audit
+
+Performed after all planned phases (1-13) were complete, per AGENTS.md's mandatory end-to-end integrated security/red-team audit. Not a phase; no tag was created. Found and fixed one genuine correctness gap (a budget reservation orphaned by a worker crash was never reconciled), corrected a stale primary README, and re-verified the complete regression suite, dependency audits, and zero-cost demos. Full detail: `docs/internal/final-production-readiness-security-audit.md`. Closeout commit: see Git history on `main` immediately after the `phase-13` tag.

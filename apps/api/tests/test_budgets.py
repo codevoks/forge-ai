@@ -22,7 +22,13 @@ from forge_api.infrastructure.budget_repositories import (
 from forge_api.infrastructure.database import Database
 from forge_api.infrastructure.dev_issuer import DevIssuer
 from forge_api.infrastructure.queue import InMemoryQueue
-from forge_api.scripts.seed import TENANT_ID
+from forge_api.infrastructure.workflow_repositories import (
+    OutboxRepository,
+    RunRepository,
+    WorkerRepository,
+    WorkflowRepository,
+)
+from forge_api.scripts.seed import TENANT_ID, WORKSPACE_ID
 
 
 def _headers(issuer: DevIssuer, subject: str = "alice") -> dict[str, str]:
@@ -285,6 +291,59 @@ def test_settle_adjusts_usage_by_the_delta_between_estimate_and_actual(database:
     assert usage["tokens_used"] == 40
 
 
+def test_settling_the_same_reservation_twice_is_rejected_not_double_counted(
+    database: Database,
+) -> None:
+    created_by = _alice_id(database)
+    workspace_id = _new_workspace(database, created_by=created_by)
+    with database.transaction(worker_id="test-worker") as conn:
+        BudgetPolicyRepository(conn).set_workspace_policy(
+            tenant_id=TENANT_ID,
+            workspace_id=workspace_id,
+            max_requests_per_day=10,
+            max_tokens_per_day=1000,
+            max_currency_minor_per_day=0,
+            created_by=created_by,
+        )
+
+    service = BudgetService(database=database)
+    reservation = service.reserve(
+        tenant_id=TENANT_ID,
+        workspace_id=workspace_id,
+        run_id=None,
+        task_id=None,
+        worker_id="test-worker",
+        operation="test:double-settle",
+        estimate=BudgetEstimate(requests=1, tokens=100),
+        created_by=created_by,
+    )
+    service.settle(
+        reservation_id=str(reservation["id"]),
+        tenant_id=TENANT_ID,
+        workspace_id=workspace_id,
+        worker_id="test-worker",
+        actual=BudgetEstimate(requests=1, tokens=100),
+    )
+
+    with pytest.raises(ProblemError) as exc_info:
+        service.settle(
+            reservation_id=str(reservation["id"]),
+            tenant_id=TENANT_ID,
+            workspace_id=workspace_id,
+            worker_id="test-worker",
+            actual=BudgetEstimate(requests=1, tokens=100),
+        )
+    assert exc_info.value.status_code == 409
+
+    with database.transaction(worker_id="test-worker") as conn:
+        usage = BudgetUsageRepository(conn).get_for_actor(
+            tenant_id=TENANT_ID,
+            workspace_id=workspace_id,
+            usage_date=datetime.now(UTC).date(),
+        )
+    assert usage["tokens_used"] == 100
+
+
 def test_concurrent_reservations_never_exceed_the_daily_ceiling(database: Database) -> None:
     created_by = _alice_id(database)
     workspace_id = _new_workspace(database, created_by=created_by)
@@ -455,3 +514,149 @@ def test_budget_reservation_write_requires_tenant_or_worker_context(
                 estimated_currency_minor=0,
                 usage_date=datetime.now(UTC).date(),
             )
+
+
+def test_recovery_scan_reconciles_a_budget_reservation_orphaned_by_a_worker_crash(
+    database: Database,
+) -> None:
+    """A worker that reserves budget then crashes before settling/releasing
+    (killed between ToolRuntime's reservation and the adapter call
+    completing) must not leave that usage counted forever, or double-count
+    it again when the reclaimed task is retried."""
+    created_by = _alice_id(database)
+    with database.transaction(actor_id=created_by) as conn:
+        workflow = next(
+            v
+            for v in WorkflowRepository(conn).list_versions_for_actor(actor_id=created_by)
+            if v["name"] == "Incident Response Demo"
+        )
+    with database.transaction(tenant_id=TENANT_ID, actor_id=created_by) as conn:
+        run = RunRepository(conn).create_run(
+            tenant_id=TENANT_ID,
+            workspace_id=WORKSPACE_ID,
+            actor_id=created_by,
+            workflow_version=workflow,
+            objective="Exercise the recovery-scan budget reconciliation fix.",
+            constraints={},
+        )
+
+    with database.transaction(worker_id="test-worker") as conn:
+        envelopes = OutboxRepository(conn).due_unpublished(limit=100)
+    envelope = next(e for e in envelopes if e.payload.get("run_id") == run["id"])
+
+    with database.transaction(worker_id="test-worker") as conn:
+        claim = WorkerRepository(conn, lease_seconds=-1).claim_task(
+            envelope=envelope, worker_id="test-worker", actor_id=created_by
+        )
+    assert claim is not None
+    task_id = claim["task_id"]
+
+    usage_date = datetime.now(UTC).date()
+    with database.transaction(worker_id="test-worker") as conn:
+        BudgetPolicyRepository(conn).get_or_create_workspace_policy(
+            tenant_id=TENANT_ID, workspace_id=WORKSPACE_ID, created_by=created_by
+        )
+        assert BudgetUsageRepository(conn).try_reserve(
+            tenant_id=TENANT_ID,
+            workspace_id=WORKSPACE_ID,
+            usage_date=usage_date,
+            requests=1,
+            tokens=64,
+            currency_minor=0,
+            max_requests=100_000,
+            max_tokens=10_000_000,
+            max_currency_minor=0,
+        )
+        orphaned_reservation = BudgetReservationRepository(conn).create(
+            tenant_id=TENANT_ID,
+            workspace_id=WORKSPACE_ID,
+            run_id=run["id"],
+            task_id=task_id,
+            operation="tool:crashed_before_settlement",
+            estimated_requests=1,
+            estimated_tokens=64,
+            estimated_currency_minor=0,
+            usage_date=usage_date,
+        )
+        usage_before_recovery = BudgetUsageRepository(conn).get_for_actor(
+            tenant_id=TENANT_ID, workspace_id=WORKSPACE_ID, usage_date=usage_date
+        )
+    assert usage_before_recovery["requests_used"] >= 1
+    assert usage_before_recovery["tokens_used"] >= 64
+
+    with database.transaction(worker_id="test-worker") as conn:
+        recovery = WorkerRepository(conn).run_recovery_scan(actor_id="test-worker")
+
+    assert recovery["expired_leases"] == 1
+    assert recovery["released_orphaned_reservations"] == 1
+
+    with database.transaction(worker_id="test-worker") as conn:
+        reservation_after = conn.execute(
+            "select status from budget_reservations where id = %s",
+            (orphaned_reservation["id"],),
+        ).fetchone()
+        usage_after_recovery = BudgetUsageRepository(conn).get_for_actor(
+            tenant_id=TENANT_ID, workspace_id=WORKSPACE_ID, usage_date=usage_date
+        )
+    assert reservation_after is not None
+    assert reservation_after["status"] == "released"
+    assert usage_after_recovery["requests_used"] == usage_before_recovery["requests_used"] - 1
+    assert usage_after_recovery["tokens_used"] == usage_before_recovery["tokens_used"] - 64
+
+
+def test_duplicate_queue_delivery_never_double_reserves_budget(
+    database: Database,
+    settings: Settings,
+    client: TestClient,
+    issuer: DevIssuer,
+) -> None:
+    """At-least-once queue delivery must not double-charge budget for one
+    logical tool call: a redelivered message for an already-succeeded
+    invocation must reuse it, not reserve/settle again."""
+    workflow = _workflow_by_name(client, issuer, "Typed Tool Demo")
+    run = _create_run(client, issuer, workflow)
+
+    queue = InMemoryQueue()
+    dispatcher = OutboxDispatcher(database=database, queue=queue, worker_id=settings.worker_id)
+    dispatcher.dispatch_once()
+    queue.messages.extend(list(queue.messages))  # simulate Redis at-least-once redelivery
+
+    consumer = WorkerConsumer(
+        database=database,
+        queue=queue,
+        worker_id=settings.worker_id,
+        lease_seconds=settings.task_lease_seconds,
+        retry_policy=RetryPolicy(max_attempts=settings.task_max_attempts),
+    )
+    run_state: dict[str, Any] = {}
+    for _ in range(160):
+        dispatcher.dispatch_once()
+        outcome = consumer.consume_once(block_ms=0)
+        if outcome == "waiting_approval":
+            for approval in client.get(
+                "/v1/approvals", headers=_headers(issuer, "ava")
+            ).json()["approval_requests"]:
+                if approval["status"] != "pending":
+                    continue
+                client.post(
+                    f"/v1/approvals/{approval['id']}:approve",
+                    headers=_headers(issuer, "ava")
+                    | {
+                        "Idempotency-Key": f"phase13-dup-approve-{uuid4()}",
+                        "If-Match": str(approval["request_version"]),
+                    },
+                    json={"reason": "Exercising duplicate-delivery budget safety."},
+                )
+        run_state = client.get(f"/v1/runs/{run['id']}", headers=_headers(issuer)).json()["run"]
+        if run_state["status"] in {"succeeded", "failed", "cancelled"}:
+            break
+    assert run_state["status"] == "succeeded"
+
+    with database.transaction(worker_id="test-worker") as conn:
+        reservations = conn.execute(
+            "select status from budget_reservations where run_id = %s", (run["id"],)
+        ).fetchall()
+    # Exactly one reservation per distinct tool call, even though every
+    # message was delivered twice.
+    assert len(reservations) == 3
+    assert {row["status"] for row in reservations} == {"settled"}
