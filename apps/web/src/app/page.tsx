@@ -50,6 +50,25 @@ import {
   type WorkerState,
   type WorkflowVersion
 } from "../lib/api";
+import { toExecutionState } from "../lib/status";
+import { AgentBudgetMeter } from "../components/AgentBudgetMeter";
+import { ApprovalPanel } from "../components/ApprovalPanel";
+import { ExecutionGraph } from "../components/ExecutionGraph";
+import { ExecutionTimeline } from "../components/ExecutionTimeline";
+import { IdentityBar, type IdentityOption } from "../components/IdentityBar";
+import { Inspector, RawJsonDisclosure, type InspectorTab } from "../components/Inspector";
+import {
+  Button,
+  Eyebrow,
+  MetricCell,
+  Panel,
+  PanelHeading,
+  StateBadge,
+  Tag
+} from "../components/primitives";
+import { SecurityState } from "../components/SecurityState";
+import { WorkerStatusStrip } from "../components/WorkerStatusStrip";
+import { WorkflowPicker } from "../components/WorkflowPicker";
 
 type DemoSubject = "alice" | "ava" | "bob" | "mallory";
 type PlanningScenario =
@@ -61,20 +80,25 @@ type PlanningScenario =
   | "prompt_injection";
 type EngineKind = "custom" | "langgraph";
 
-const buttonBase =
-  "cursor-pointer rounded-full border border-zinc-800 bg-[#0d0d0f] px-3.5 py-2 text-sm font-medium text-zinc-100 transition duration-150 hover:-translate-y-0.5 hover:border-zinc-700 hover:bg-[#141417]";
-const activeButton =
-  "border-violet-400 bg-gradient-to-br from-violet-400 to-fuchsia-600 text-white shadow-[0_0_0_1px_rgba(167,139,250,0.26),0_12px_28px_rgba(147,51,234,0.28)]";
-const panelClass =
-  "rounded-[18px] border border-zinc-800 bg-[#0d0d0f]/90 p-4 shadow-[0_18px_60px_rgba(0,0,0,0.24)]";
-const cardClass = "rounded-2xl border border-zinc-800 bg-[#141417] p-4";
-const pillClass = "rounded-full border border-violet-400/25 bg-violet-400/10 px-2 py-1 text-xs text-violet-200";
-const mutedPillClass = "rounded-full border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-300";
+const IDENTITY_OPTIONS: IdentityOption<DemoSubject>[] = [
+  { key: "alice", label: "Alice Admin", hint: "Full workspace administration capabilities" },
+  { key: "ava", label: "Ava Approver", hint: "Can decide pending approval requests" },
+  { key: "bob", label: "Bob Viewer", hint: "Read-only — cannot create runs or approve" },
+  { key: "mallory", label: "Mallory Outsider", hint: "No workspace membership — used to prove tenant isolation" }
+];
 
 function hasCapability(actor: ActorSummary | null, capability: string) {
   return Boolean(
     actor?.workspaces.some((workspace) => workspace.capabilities.includes(capability))
   );
+}
+
+function classifyToolError(errorType: string | null): "denied" | "exhausted" | "invalid" {
+  if (!errorType) return "invalid";
+  const key = errorType.toLowerCase();
+  if (key.includes("budget")) return "exhausted";
+  if (key.includes("polic") || key.includes("permission") || key.includes("auth")) return "denied";
+  return "invalid";
 }
 
 export default function Home() {
@@ -104,6 +128,7 @@ export default function Home() {
   const [evaluationRunning, setEvaluationRunning] = useState(false);
   const [debuggerSnapshot, setDebuggerSnapshot] = useState<DebuggerSnapshot | null>(null);
   const [debuggerRunning, setDebuggerRunning] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   async function loadIdentity(subject: DemoSubject) {
     setSelected(subject);
@@ -128,6 +153,7 @@ export default function Home() {
     setEvaluationRunning(false);
     setDebuggerSnapshot(null);
     setDebuggerRunning(false);
+    setSelectedTaskId(null);
     setStatus("Loading signed local token and workspace scope...");
     try {
       const nextToken = await getDemoToken(subject);
@@ -524,1048 +550,727 @@ export default function Home() {
   const latestModelCall = modelCalls[0];
   const runApprovals = run ? approvals.filter((approval) => approval.run_id === run.id) : [];
   const pendingRunApproval = runApprovals.find((approval) => approval.status === "pending");
+  const decidedRunApprovals = runApprovals.filter((approval) => approval.status !== "pending");
   const canRunEvaluations = hasCapability(actor, "run.create");
   const evaluationMetrics = evaluationRun
     ? Object.fromEntries(
         evaluationRun.metrics.map((metric) => [metric.metric_name, metric.metric_value])
       )
     : {};
+  const failedToolInvocations = toolInvocations.filter((invocation) => Boolean(invocation.error_type));
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null;
 
-  return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(167,139,250,0.16),transparent_32rem),linear-gradient(180deg,#09090b_0%,#050505_44%)] px-6 py-8">
-      <div className="mx-auto grid max-w-5xl gap-4">
-        <section>
-          <p className="text-sm text-zinc-400">Forge AI control plane</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-zinc-50">
-            Identity, tenancy, and durable local workflow execution
-          </h1>
-        </section>
+  const inspectorTabs: InspectorTab[] = [];
+  if (run) {
+    inspectorTabs.push({
+      key: "timeline",
+      label: "Timeline",
+      count: events.length,
+      content: <ExecutionTimeline events={events} />
+    });
 
-        <section className={panelClass}>
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              className={`${buttonBase} ${selected === "alice" ? activeButton : ""}`}
-              onClick={() => void loadIdentity("alice")}
-            >
-              Alice Admin
-            </button>
-            <button
-              className={`${buttonBase} ${selected === "ava" ? activeButton : ""}`}
-              onClick={() => void loadIdentity("ava")}
-            >
-              Ava Approver
-            </button>
-            <button
-              className={`${buttonBase} ${selected === "bob" ? activeButton : ""}`}
-              onClick={() => void loadIdentity("bob")}
-            >
-              Bob Viewer
-            </button>
-            <button
-              className={`${buttonBase} ${selected === "mallory" ? activeButton : ""}`}
-              onClick={() => void loadIdentity("mallory")}
-            >
-              Mallory Outsider
-            </button>
+    inspectorTabs.push({
+      key: "planner",
+      label: "Planner",
+      count: plans.length,
+      content: (
+        <div className="space-y-4">
+          <div>
+            <Eyebrow>Structured planner</Eyebrow>
+            <p className="mt-1 text-sm text-ink-muted">
+              The fake model proposes a plan only. Runtime authorization, tools, budgets, and
+              execution remain controlled by Forge application code.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <Button variant="primary" size="sm" onClick={() => void createPlannerProposal("valid")}>
+                Generate valid plan
+              </Button>
+              <Button size="sm" onClick={() => void createPlannerProposal("repairable_malformed")}>
+                Repair malformed output
+              </Button>
+              <Button size="sm" onClick={() => void createPlannerProposal("prompt_injection")}>
+                Prompt-injection scenario
+              </Button>
+              <Button size="sm" onClick={() => void createPlannerProposal("hallucinated_tool", false)}>
+                Reject hallucinated tool
+              </Button>
+              <Button size="sm" onClick={() => void createPlannerProposal("cyclic_plan", false)}>
+                Reject cycle
+              </Button>
+            </div>
           </div>
-          <p className="mt-4 text-sm text-zinc-200">{status}</p>
-          {error ? <p className="mt-2 whitespace-pre-wrap text-sm text-rose-400">{error}</p> : null}
-        </section>
 
-        {actor ? (
-          <section className={panelClass}>
-            <h2 className="text-xl font-semibold text-zinc-50">{actor.display_name}</h2>
-            <p className="mt-2 text-sm text-zinc-400">{actor.email}</p>
-            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[repeat(auto-fit,minmax(260px,1fr))]">
-              {actor.workspaces.map((workspace) => (
-                <article className={cardClass} key={workspace.id}>
-                  <h3 className="font-semibold text-zinc-50">{workspace.name}</h3>
-                  <p className="mt-3 text-sm text-zinc-400">Role: {workspace.role}</p>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {workspace.capabilities.map((capability) => (
-                      <span className={pillClass} key={capability}>
-                        {capability}
-                      </span>
-                    ))}
-                  </div>
-                </article>
-              ))}
-              {actor.workspaces.length === 0 ? (
-                <article className={cardClass}>
-                  <h3 className="font-semibold text-zinc-50">No accessible workspaces</h3>
-                  <p className="mt-3 text-sm text-zinc-400">
-                    The API returned no tenant-scoped memberships.
-                  </p>
-                </article>
-              ) : null}
-            </div>
-          </section>
-        ) : null}
-
-        {actor && workerState ? (
-          <section className={panelClass}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-sm text-zinc-400">Durable worker plane</p>
-                <h2 className="mt-1 text-xl font-semibold text-zinc-50">
-                  PostgreSQL outbox, Redis queue, leases, checkpoints, and recovery
-                </h2>
-                <p className="mt-2 text-sm text-zinc-400">
-                  Counts are read from the API under the selected identity and workspace scope.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button className={buttonBase} onClick={() => void refreshOperations()}>
-                  Refresh worker state
-                </button>
-                <button
-                  className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
-                  disabled={!canRecover}
-                  onClick={() => void scanRecovery()}
-                >
-                  Run recovery scan
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
-              <article className={cardClass}>
-                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Outbox pending</p>
-                <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                  {workerState.outbox.unpublished}
-                </p>
-              </article>
-              <article className={cardClass}>
-                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Outbox sent</p>
-                <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                  {workerState.outbox.published}
-                </p>
-              </article>
-              <article className={cardClass}>
-                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Running</p>
-                <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                  {workerState.attempts.running ?? 0}
-                </p>
-              </article>
-              <article className={cardClass}>
-                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Checkpoints</p>
-                <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                  {workerState.checkpoints}
-                </p>
-              </article>
-              <article className={cardClass}>
-                <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Dead letters</p>
-                <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                  {workerState.dead_letters}
-                </p>
-              </article>
-            </div>
-
-            {recovery ? (
-              <p className="mt-4 text-sm text-zinc-300">
-                Last recovery scan: expired leases {recovery.expired_leases}, due retries{" "}
-                {recovery.due_retries}, republished ready tasks{" "}
-                {recovery.republished_ready_tasks}.
-              </p>
-            ) : null}
-
-            {canRecover && deadLetters.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
-                <h3 className="font-semibold text-zinc-50">Dead-letter recovery</h3>
-                <div className="mt-3 grid gap-2">
-                  {deadLetters.slice(0, 3).map((deadLetter) => (
-                    <article
-                      className="rounded-xl border border-zinc-800 bg-[#0d0d0f] p-3"
-                      key={deadLetter.id}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm text-violet-200">{deadLetter.reason}</p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            Payload is sanitized; task input and secrets are not displayed.
-                          </p>
-                        </div>
-                        <button
-                          className={`${buttonBase} ${
-                            deadLetter.requeued_at ? "opacity-50" : activeButton
-                          }`}
-                          disabled={Boolean(deadLetter.requeued_at)}
-                          onClick={() => void retryDeadLetter(deadLetter.id)}
-                        >
-                          {deadLetter.requeued_at ? "Requeued" : "Requeue"}
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+          {latestPlan ? (
+            <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+              <div className="rounded-md border border-line bg-surface-2 p-3.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Tag tone="accent">plan v{latestPlan.version_number}</Tag>
+                  <Tag tone={latestPlan.status === "validated" ? "accent" : "danger"}>
+                    {latestPlan.status}
+                  </Tag>
                 </div>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {actor ? (
-          <section className={panelClass}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-sm text-zinc-400">Offline evaluation harness</p>
-                <h2 className="mt-1 text-xl font-semibold text-zinc-50">
-                  LangChain, LangGraph, security, and failure-injection regression
-                </h2>
-                <p className="mt-2 text-sm text-zinc-400">
-                  Runs deterministic model/provider cases, real Forge planner validation, real
-                  worker/agent execution, LangGraph checkpointing, and a local LangSmith-shaped
-                  export artifact. Live providers remain disabled by default.
-                </p>
-              </div>
-              <button
-                className={`${buttonBase} ${canRunEvaluations ? activeButton : "opacity-50"}`}
-                disabled={!canRunEvaluations || evaluationRunning}
-                onClick={() => void runEvaluationHarness()}
-              >
-                {evaluationRunning ? "Running..." : "Run offline evaluation"}
-              </button>
-            </div>
-
-            {evaluationRun ? (
-              <div className="mt-4 grid gap-4">
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                  <article className={cardClass}>
-                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Status</p>
-                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                      {evaluationRun.status}
-                    </p>
-                  </article>
-                  <article className={cardClass}>
-                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Cases</p>
-                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                      {String(evaluationRun.summary.passed_cases)}/
-                      {String(evaluationRun.summary.total_cases)}
-                    </p>
-                  </article>
-                  <article className={cardClass}>
-                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Security</p>
-                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                      {String(evaluationRun.summary.security_failed_cases)} failed
-                    </p>
-                  </article>
-                  <article className={cardClass}>
-                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">
-                      LangSmith
-                    </p>
-                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                      {evaluationRun.exports[0]?.status ?? "none"}
-                    </p>
-                  </article>
-                  <article className={cardClass}>
-                    <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Cost</p>
-                    <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                      {String(evaluationRun.summary.paid_provider_calls)}
-                    </p>
-                  </article>
-                </div>
-
-                <div className="grid gap-3 lg:grid-cols-[1.25fr_0.75fr]">
-                  <article className={cardClass}>
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <h3 className="font-semibold text-zinc-50">Case results</h3>
-                      <span className={pillClass}>
-                        pass rate {String(evaluationMetrics.case_pass_rate ?? "n/a")}
-                      </span>
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      {evaluationRun.case_results.map((caseResult) => (
-                        <div
-                          className="rounded-xl border border-zinc-800 bg-black/30 p-3"
-                          key={caseResult.id}
-                        >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={
-                                caseResult.status === "passed"
-                                  ? pillClass
-                                  : "rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-1 text-xs text-rose-200"
-                              }
-                            >
-                              {caseResult.status}
-                            </span>
-                            <span className={mutedPillClass}>{caseResult.category}</span>
-                            <span className={mutedPillClass}>{caseResult.provider}</span>
-                            {caseResult.engine_kind ? (
-                              <span className={mutedPillClass}>{caseResult.engine_kind}</span>
-                            ) : null}
-                            {caseResult.security_critical ? (
-                              <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs text-amber-200">
-                                security critical
-                              </span>
-                            ) : null}
-                          </div>
-                          <p className="mt-2 font-mono text-xs text-violet-200">
-                            {caseResult.case_key}
-                          </p>
-                          {caseResult.failure_message ? (
-                            <p className="mt-2 text-sm text-rose-300">
-                              {caseResult.failure_message}
-                            </p>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </article>
-
-                  <article className={cardClass}>
-                    <h3 className="font-semibold text-zinc-50">Framework evidence</h3>
-                    <div className="mt-3 grid gap-2 text-sm text-zinc-300">
-                      <p>
-                        LangChain exercised:{" "}
-                        {String(evaluationRun.summary.langchain_provider_exercised)}
-                      </p>
-                      <p>
-                        LangGraph exercised: {String(evaluationRun.summary.langgraph_exercised)}
-                      </p>
-                      <p>
-                        Live LangSmith export:{" "}
-                        {String(evaluationRun.summary.langsmith_live_export)}
-                      </p>
-                      <p>External integrations: {evaluationRun.external_integrations}</p>
-                    </div>
-                    <pre className="mt-4 max-h-80 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
-                      {JSON.stringify(
-                        {
-                          metrics: evaluationMetrics,
-                          langsmith_export: evaluationRun.exports[0]?.artifact
-                        },
-                        null,
-                        2
-                      )}
-                    </pre>
-                  </article>
-                </div>
-              </div>
-            ) : (
-              <p className="mt-4 text-sm text-zinc-500">
-                Select Alice Admin, then run the offline suite to inspect persisted case results,
-                metrics, and export evidence.
-              </p>
-            )}
-          </section>
-        ) : null}
-
-        {actor && tools.length > 0 ? (
-          <section className={panelClass}>
-            <div>
-              <p className="text-sm text-zinc-400">Typed tool catalog</p>
-              <h2 className="mt-1 text-xl font-semibold text-zinc-50">
-                Code-registered tools with versioned schemas and risk labels
-              </h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                This catalog is read-only. The browser can inspect registered tools, but it cannot
-                execute arbitrary tool calls.
-              </p>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-              {tools.map((tool) => (
-                <article className={cardClass} key={tool.id}>
-                  <div className="flex flex-wrap gap-2">
-                    <span className={pillClass}>v{tool.version}</span>
-                    <span className={mutedPillClass}>{tool.risk}</span>
-                    <span className={mutedPillClass}>{tool.status}</span>
-                  </div>
-                  <h3 className="mt-3 font-semibold text-zinc-50">{tool.display_name}</h3>
-                  <p className="mt-2 text-sm text-zinc-400">{tool.description}</p>
-                  <p className="mt-3 break-all font-mono text-xs text-violet-200">{tool.name}</p>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {actor && selectedWorkflow ? (
-          <section className={panelClass}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-sm text-zinc-400">Published workflow version</p>
-                <h2 className="mt-1 text-xl font-semibold text-zinc-50">
-                  {selectedWorkflow.name}
-                </h2>
-                <p className="mt-2 text-sm text-zinc-400">
-                  Immutable version {selectedWorkflow.version_number}; persisted DAG with{" "}
-                  {selectedWorkflow.steps.length} steps and {selectedWorkflow.edges.length} edges.
-                </p>
-              </div>
-              <button
-                className={`${buttonBase} ${canCreateRun ? activeButton : "opacity-50"}`}
-                disabled={!canCreateRun}
-                onClick={() => void createDeterministicRun()}
-              >
-                Create selected run
-              </button>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {workflows.map((workflow) => (
-                <button
-                  className={`${buttonBase} ${
-                    selectedWorkflowId === workflow.id ? activeButton : ""
-                  }`}
-                  key={workflow.id}
-                  onClick={() => {
-                    setSelectedWorkflowId(workflow.id);
-                    setRun(null);
-                    setTasks([]);
-                    setEvents([]);
-                    setToolInvocations([]);
-                    setEvidenceItems([]);
-                    setPlans([]);
-                    setModelCalls([]);
-                    setAgentIterations([]);
-                    setEngineCheckpoints([]);
-                    setDebuggerSnapshot(null);
-                  }}
-                >
-                  {workflow.name}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-              {selectedWorkflow.steps.map((step) => (
-                <article className={cardClass} key={step.key}>
-                  <p className="text-xs uppercase tracking-[0.2em] text-violet-300">{step.key}</p>
-                  <h3 className="mt-2 font-semibold text-zinc-50">{step.name}</h3>
-                  <p className="mt-2 text-sm text-zinc-400">{step.kind}</p>
-                </article>
-              ))}
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-zinc-400">Workflow engine strategy</p>
-                  <h3 className="mt-1 font-semibold text-zinc-50">
-                    Custom runtime or LangGraph StateGraph, same Forge authority
-                  </h3>
-                  <p className="mt-2 text-sm text-zinc-400">
-                    LangGraph is selected per run for comparison. PostgreSQL, policy, tools,
-                    approvals, budgets, and evidence remain enforced by Forge application code.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className={`${buttonBase} ${selectedEngine === "custom" ? activeButton : ""}`}
-                    onClick={() => setSelectedEngine("custom")}
-                  >
-                    Custom engine
-                  </button>
-                  <button
-                    className={`${buttonBase} ${selectedEngine === "langgraph" ? activeButton : ""}`}
-                    onClick={() => setSelectedEngine("langgraph")}
-                  >
-                    LangGraph engine
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {run ? (
-          <section className={panelClass}>
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-sm text-zinc-400">Current run</p>
-                <h2 className="mt-1 text-xl font-semibold text-zinc-50">{run.objective}</h2>
-                <p className="mt-2 text-sm text-zinc-400">
-                  Status: <span className="text-violet-200">{run.status}</span> · Version:{" "}
-                  {run.version}
-                </p>
-                <p className="mt-2 text-sm text-zinc-400">
-                  Engine: <span className="font-mono text-violet-200">{run.engine_kind}</span> ·{" "}
-                  {run.engine_version}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button className={buttonBase} onClick={() => void refreshCurrentRun()}>
-                  Refresh run state
-                </button>
-                <button
-                  className={`${buttonBase} ${
-                    run.status === "running" ? activeButton : "opacity-50"
-                  }`}
-                  disabled={run.status !== "running"}
-                  onClick={() => void cancelCurrentRun()}
-                >
-                  Cancel run
-                </button>
-                <button
-                  className={`${buttonBase} ${
-                    run.status === "running" ? activeButton : "opacity-50"
-                  }`}
-                  disabled={run.status !== "running"}
-                  onClick={() => void advanceDeterministicRun()}
-                >
-                  Manual fallback advance
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-              {tasks.map((task) => (
-                <article className={cardClass} key={task.id}>
-                  <p className="text-xs uppercase tracking-[0.2em] text-violet-300">
-                    {task.step_key}
-                  </p>
-                  <h3 className="mt-2 font-semibold text-zinc-50">{task.name}</h3>
-                  <p className="mt-2 text-sm text-zinc-400">Status: {task.status}</p>
-                </article>
-              ))}
-            </div>
-
-            {engineCheckpoints.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm text-zinc-400">LangGraph checkpoint mirror</p>
-                    <h3 className="mt-1 font-semibold text-zinc-50">
-                      Framework graph state is inspectable, but not authoritative
-                    </h3>
-                    <p className="mt-2 text-sm text-zinc-400">
-                      These rows are tenant-scoped checkpoint metadata mapped to Forge run/task
-                      IDs. They expose node flow and reducer history without storing secrets.
-                    </p>
-                  </div>
-                  <span className={pillClass}>{engineCheckpoints.length} checkpoints</span>
-                </div>
-                <div className="mt-4 grid gap-3">
-                  {engineCheckpoints.slice(-6).map((checkpoint) => (
-                    <article className={cardClass} key={checkpoint.id}>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={pillClass}>{checkpoint.node_name}</span>
-                        <span className={mutedPillClass}>{checkpoint.namespace}</span>
-                        <span className={mutedPillClass}>{checkpoint.engine_version}</span>
-                      </div>
-                      <p className="mt-2 break-all font-mono text-xs text-violet-200">
-                        checkpoint {checkpoint.checkpoint_id.slice(0, 28)}…
-                      </p>
-                      <pre className="mt-3 max-h-40 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
-                        {JSON.stringify(
-                          {
-                            state_summary: checkpoint.state_summary,
-                            metadata: checkpoint.metadata
-                          },
-                          null,
-                          2
-                        )}
-                      </pre>
-                    </article>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {agentIterations.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm text-zinc-400">Bounded agent runtime</p>
-                    <h3 className="mt-1 font-semibold text-zinc-50">
-                      Perceive → decide → act → observe, with persisted checkpoints
-                    </h3>
-                    <p className="mt-2 text-sm text-zinc-400">
-                      The fake model proposes structured decisions. Forge validates tool grants,
-                      schemas, budgets, citations, and termination in application code.
-                    </p>
-                  </div>
-                  <span className={pillClass}>{agentIterations.length} iterations</span>
-                </div>
-
-                <div className="mt-4 grid gap-3">
-                  {agentIterations.map((iteration) => (
-                    <article className={cardClass} key={iteration.id}>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={pillClass}>iteration {iteration.iteration_number}</span>
-                        <span className={mutedPillClass}>{iteration.decision_type}</span>
-                        <span
-                          className={
-                            iteration.decision_status === "validated"
-                              ? pillClass
-                              : "rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-1 text-xs text-rose-200"
-                          }
-                        >
-                          {iteration.decision_status}
-                        </span>
-                      </div>
-                      <p className="mt-2 break-all font-mono text-xs text-violet-200">
-                        context hash {iteration.context_hash.slice(0, 20)}… · model call{" "}
-                        {iteration.model_call_id.slice(0, 20)}…
-                      </p>
-                      {iteration.validation_errors.length > 0 ? (
-                        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-300">
-                          {iteration.validation_errors.map((validationError) => (
-                            <li key={validationError}>{validationError}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      <pre className="mt-3 max-h-44 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
-                        {JSON.stringify(
-                          {
-                            counters: iteration.counters_snapshot,
-                            decision: iteration.decision,
-                            result: iteration.result
-                          },
-                          null,
-                          2
-                        )}
-                      </pre>
-                    </article>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {runApprovals.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm text-zinc-400">Human approval inbox</p>
-                    <h3 className="mt-1 font-semibold text-zinc-50">
-                      Exact-action approval for simulated effects
-                    </h3>
-                    <p className="mt-2 text-sm text-zinc-400">
-                      Approval is bound to the exact action hash, tool version, arguments, run,
-                      task, expiry, and approver eligibility. It does not grant new permissions.
-                    </p>
-                  </div>
-                  {pendingRunApproval ? (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className={buttonBase}
-                        onClick={() => void tryApproveWithCurrentActor(pendingRunApproval)}
-                      >
-                        Try current actor approval
-                      </button>
-                      <button
-                        className={activeButton + " cursor-pointer rounded-full px-3.5 py-2 text-sm"}
-                        onClick={() => void approveAsAva(pendingRunApproval)}
-                      >
-                        Approve as Ava
-                      </button>
-                      <button
-                        className={buttonBase}
-                        onClick={() => void rejectAsAva(pendingRunApproval)}
-                      >
-                        Reject as Ava
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="mt-4 grid gap-3">
-                  {runApprovals.map((approval) => (
-                    <article className={cardClass} key={approval.id}>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={pillClass}>{approval.status}</span>
-                        <span className={mutedPillClass}>{approval.risk}</span>
-                        <span className={mutedPillClass}>v{approval.request_version}</span>
-                      </div>
-                      <p className="mt-3 text-sm text-zinc-300">{approval.reason}</p>
-                      <p className="mt-2 break-all font-mono text-xs text-violet-200">
-                        action hash {approval.action_hash}
-                      </p>
-                      <pre className="mt-3 max-h-40 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
-                        {JSON.stringify(approval.action_summary, null, 2)}
-                      </pre>
-                    </article>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-zinc-400">Structured planner</p>
-                  <h3 className="mt-1 font-semibold text-zinc-50">
-                    Fake model proposals, real validation, persisted model-call ledger
-                  </h3>
-                  <p className="mt-2 text-sm text-zinc-400">
-                    The model proposes a plan only. Runtime authorization, tools, budgets, and
-                    execution remain controlled by Forge application code.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className={activeButton + " cursor-pointer rounded-full px-3.5 py-2 text-sm"}
-                    onClick={() => void createPlannerProposal("valid")}
-                  >
-                    Generate valid plan
-                  </button>
-                  <button
-                    className={buttonBase}
-                    onClick={() => void createPlannerProposal("repairable_malformed")}
-                  >
-                    Repair malformed output
-                  </button>
-                  <button
-                    className={buttonBase}
-                    onClick={() => void createPlannerProposal("prompt_injection")}
-                  >
-                    Prompt-injection scenario
-                  </button>
-                  <button
-                    className={buttonBase}
-                    onClick={() => void createPlannerProposal("hallucinated_tool", false)}
-                  >
-                    Reject hallucinated tool
-                  </button>
-                  <button
-                    className={buttonBase}
-                    onClick={() => void createPlannerProposal("cyclic_plan", false)}
-                  >
-                    Reject cycle
-                  </button>
-                </div>
-              </div>
-
-              {latestPlan ? (
-                <div className="mt-4 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-                  <article className={cardClass}>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={pillClass}>plan v{latestPlan.version_number}</span>
-                      <span
-                        className={
-                          latestPlan.status === "validated"
-                            ? pillClass
-                            : "rounded-full border border-rose-400/30 bg-rose-400/10 px-2 py-1 text-xs text-rose-200"
-                        }
-                      >
-                        {latestPlan.status}
-                      </span>
-                    </div>
-                    <p className="mt-3 text-sm text-zinc-300">{latestPlan.summary}</p>
-                    {latestPlan.validation_errors.length > 0 ? (
-                      <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-300">
+                <p className="mt-2.5 text-sm text-ink-muted">{latestPlan.summary}</p>
+                {latestPlan.validation_errors.length > 0 ? (
+                  <SecurityState
+                    attempt="Structured plan proposal"
+                    control="Planner schema and graph validation"
+                    decision="invalid"
+                    consequence="Plan rejected before persistence"
+                    detail={
+                      <ul className="list-disc space-y-1 pl-4">
                         {latestPlan.validation_errors.map((validationError) => (
                           <li key={validationError}>{validationError}</li>
                         ))}
                       </ul>
+                    }
+                  />
+                ) : null}
+                <div className="mt-3 space-y-2">
+                  {latestPlan.nodes.map((node) => (
+                    <div key={node.id} className="rounded border border-line bg-surface-0 p-2.5">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-mono text-accent-strong">{node.key}</span>
+                        <Tag>{node.kind}</Tag>
+                        {node.tool_name ? (
+                          <Tag tone="accent">
+                            {node.tool_name} v{node.tool_version}
+                          </Tag>
+                        ) : null}
+                      </div>
+                      <p className="mt-1.5 text-sm text-ink">{node.title}</p>
+                      <p className="mt-0.5 text-xs text-ink-faint">{node.rationale}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-md border border-line bg-surface-2 p-3.5">
+                <p className="text-sm font-medium text-ink">Model call evidence</p>
+                {latestModelCall ? (
+                  <div className="mt-2 space-y-1 text-xs text-ink-muted">
+                    <p>
+                      Provider: <span className="font-mono text-accent-strong">{latestModelCall.provider}</span>
+                    </p>
+                    <p>Model: {latestModelCall.model_name}</p>
+                    <p>Status: {latestModelCall.status}</p>
+                    <p>Tokens: {latestModelCall.total_tokens}</p>
+                    <p>Estimated cost minor units: {latestModelCall.estimated_cost_minor}</p>
+                    <p>Live provider call: {String(latestModelCall.live_provider)}</p>
+                    {latestModelCall.error_type ? (
+                      <p className="text-rose-300">
+                        {latestModelCall.error_type}: {latestModelCall.error_message}
+                      </p>
                     ) : null}
-                    <div className="mt-4 grid gap-2">
-                      {latestPlan.nodes.map((node) => (
-                        <div
-                          className="rounded-xl border border-zinc-800 bg-black/30 p-3"
-                          key={node.id}
+                  </div>
+                ) : null}
+                {latestPlan.edges.length > 0 ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-ink">Plan edges</p>
+                    <ol className="mt-1.5 space-y-1 text-xs text-ink-faint">
+                      {latestPlan.edges.map((edge) => (
+                        <li key={`${edge.from}-${edge.to}`}>
+                          <span className="font-mono text-accent-strong">{edge.from}</span> →{" "}
+                          <span className="font-mono text-accent-strong">{edge.to}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-faint">Generate a structured plan to inspect persisted planner output.</p>
+          )}
+        </div>
+      )
+    });
+
+    if (agentIterations.length > 0) {
+      inspectorTabs.push({
+        key: "agent",
+        label: "Agent",
+        count: agentIterations.length,
+        content: (
+          <div className="space-y-4">
+            <AgentBudgetMeter iterations={agentIterations} />
+            <div className="space-y-2">
+              {agentIterations.map((iteration) => (
+                <div key={iteration.id} className="rounded-md border border-line bg-surface-2 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Tag tone="accent">iteration {iteration.iteration_number}</Tag>
+                    <Tag>{iteration.decision_type}</Tag>
+                    <Tag tone={iteration.decision_status === "validated" ? "accent" : "danger"}>
+                      {iteration.decision_status}
+                    </Tag>
+                  </div>
+                  {iteration.validation_errors.length > 0 ? (
+                    <div className="mt-2">
+                      <SecurityState
+                        attempt={`Agent decision — iteration ${iteration.iteration_number}`}
+                        control="Structured decision schema validation"
+                        decision="invalid"
+                        consequence="Decision rejected; agent must retry within its bounded budget"
+                        detail={
+                          <ul className="list-disc space-y-1 pl-4">
+                            {iteration.validation_errors.map((validationError) => (
+                              <li key={validationError}>{validationError}</li>
+                            ))}
+                          </ul>
+                        }
+                      />
+                    </div>
+                  ) : null}
+                  <div className="mt-2">
+                    <RawJsonDisclosure
+                      label={`Iteration ${iteration.iteration_number} raw decision`}
+                      data={{
+                        counters_snapshot: iteration.counters_snapshot,
+                        decision: iteration.decision,
+                        result: iteration.result
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      });
+    }
+
+    inspectorTabs.push({
+      key: "tools",
+      label: "Tools & evidence",
+      count: toolInvocations.length + evidenceItems.length,
+      content: (
+        <div className="space-y-5">
+          <div>
+            <Eyebrow>Tool invocation ledger</Eyebrow>
+            {toolInvocations.length === 0 ? (
+              <p className="mt-2 text-sm text-ink-faint">No tool invocations recorded for this run yet.</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {toolInvocations.map((invocation) => (
+                  <div key={invocation.id} className="rounded-md border border-line bg-surface-2 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-mono text-sm text-accent-strong">
+                          {invocation.tool_name} v{invocation.tool_version}
+                        </p>
+                        <p className="mt-0.5 text-xs text-ink-faint">
+                          action hash {invocation.action_hash.slice(0, 16)}… · idempotency{" "}
+                          {invocation.idempotency_key}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        <StateBadge state={toExecutionState(invocation.status)} label={invocation.status} />
+                        <Tag>{invocation.risk}</Tag>
+                      </div>
+                    </div>
+                    {invocation.error_type ? (
+                      <div className="mt-2.5">
+                        <SecurityState
+                          attempt={`${invocation.tool_name} v${invocation.tool_version} invocation`}
+                          control="Typed tool argument, policy, and grant validation"
+                          decision={classifyToolError(invocation.error_type)}
+                          consequence="Invocation rejected before any effect executed"
+                          detail={`${invocation.error_type}: ${invocation.error_message ?? "no further detail"}`}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <Eyebrow>Evidence provenance</Eyebrow>
+            {evidenceItems.length === 0 ? (
+              <p className="mt-2 text-sm text-ink-faint">No evidence items recorded for this run yet.</p>
+            ) : (
+              <div className="mt-2 space-y-2">
+                {evidenceItems.map((item) => (
+                  <div key={item.id} className="rounded-md border border-line bg-surface-2 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-mono text-sm text-accent-strong">{item.source_name}</p>
+                        <p className="mt-0.5 text-xs text-ink-faint">
+                          {item.source_type} · content hash {item.content_hash.slice(0, 16)}…
+                        </p>
+                      </div>
+                      <Tag tone={item.trust_label === "untrusted_tool_output" ? "warn" : "accent"}>
+                        {item.trust_label}
+                      </Tag>
+                    </div>
+                    <div className="mt-2">
+                      <RawJsonDisclosure label="Evidence summary" data={item.summary} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )
+    });
+
+    if (decidedRunApprovals.length > 0) {
+      inspectorTabs.push({
+        key: "approvals",
+        label: "Approval history",
+        count: decidedRunApprovals.length,
+        content: (
+          <div className="space-y-3">
+            {decidedRunApprovals.map((approval) => (
+              <ApprovalPanel key={approval.id} approval={approval} />
+            ))}
+          </div>
+        )
+      });
+    }
+
+    if (engineCheckpoints.length > 0) {
+      inspectorTabs.push({
+        key: "langgraph",
+        label: "LangGraph checkpoints",
+        count: engineCheckpoints.length,
+        content: (
+          <div className="space-y-2">
+            <p className="text-sm text-ink-muted">
+              Tenant-scoped checkpoint metadata mapped to Forge run/task IDs. Framework graph state is
+              inspectable, but never authoritative.
+            </p>
+            {engineCheckpoints.slice(-6).map((checkpoint) => (
+              <div key={checkpoint.id} className="rounded-md border border-line bg-surface-2 p-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Tag tone="accent">{checkpoint.node_name}</Tag>
+                  <Tag>{checkpoint.namespace}</Tag>
+                  <Tag>{checkpoint.engine_version}</Tag>
+                </div>
+                <p className="mt-1.5 break-all font-mono text-xs text-ink-faint">
+                  checkpoint {checkpoint.checkpoint_id.slice(0, 28)}…
+                </p>
+                <div className="mt-2">
+                  <RawJsonDisclosure
+                    label="Checkpoint state"
+                    data={{ state_summary: checkpoint.state_summary, metadata: checkpoint.metadata }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      });
+    }
+
+    inspectorTabs.push({
+      key: "debugger",
+      label: "Debugger",
+      content: (
+        <div className="space-y-4">
+          <div>
+            <Eyebrow>Execution debugger and safe replay</Eyebrow>
+            <p className="mt-1 text-sm text-ink-muted">
+              Correlates events, model calls, tool invocations, evidence, and checkpoints. Replay is
+              simulation-only by default; unsafe effect replay is blocked.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <Button size="sm" variant={debuggerSnapshot ? "secondary" : "primary"} disabled={debuggerRunning} onClick={() => void loadDebugger()}>
+                {debuggerRunning ? "Working..." : "Load debugger"}
+              </Button>
+              <Button size="sm" disabled={!canRecover || debuggerRunning} onClick={() => void runProjectionVerification()}>
+                Verify projection
+              </Button>
+              <Button size="sm" disabled={!canRecover || debuggerRunning} onClick={() => void runReplay("simulation")}>
+                Simulation replay
+              </Button>
+              <Button size="sm" disabled={!canRecover || debuggerRunning} onClick={() => void runReplay("effect_replay")}>
+                Prove effect replay blocked
+              </Button>
+              <Button size="sm" disabled={!canRecover || debuggerRunning} onClick={() => void exportLocalTrace()}>
+                Export local trace
+              </Button>
+            </div>
+          </div>
+
+          {debuggerSnapshot ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                <MetricCell label="Events" value={debuggerSnapshot.timeline.events.length} />
+                <MetricCell label="Models" value={debuggerSnapshot.model_calls.length} />
+                <MetricCell label="Tools" value={debuggerSnapshot.tool_invocations.length} />
+                <MetricCell label="Projection" value={debuggerSnapshot.projection_verification?.status ?? "not run"} />
+                <MetricCell label="Paid calls" value={0} />
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+                <div className="rounded-md border border-line bg-surface-2 p-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-ink">Causal timeline</p>
+                    <Tag tone="accent">
+                      cursor {debuggerSnapshot.timeline.next_cursor ? "available" : "empty"}
+                    </Tag>
+                  </div>
+                  <div className="mt-2 space-y-1.5">
+                    {debuggerSnapshot.timeline.events.slice(-8).map((debugEvent) => (
+                      <div key={debugEvent.id} className="rounded border border-line bg-surface-0 p-2">
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                          <Tag tone="accent">#{debugEvent.sequence}</Tag>
+                          <span className="font-mono text-accent-strong">{debugEvent.event_type}</span>
+                          <Tag>v{debugEvent.schema_version}</Tag>
+                          <Tag>known {String(debugEvent.catalog_known)}</Tag>
+                        </div>
+                        <p className="mt-1 break-all font-mono text-[11px] text-ink-faint">
+                          payload hash {debugEvent.payload_hash?.slice(0, 24)}… · correlation{" "}
+                          {debugEvent.correlation_id.slice(0, 16)}…
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-md border border-line bg-surface-2 p-3">
+                  <p className="text-sm font-medium text-ink">Replay and trace evidence</p>
+                  <div className="mt-2 space-y-1 text-xs text-ink-muted">
+                    <p>Raw payloads exposed: {String(debuggerSnapshot.security_posture.raw_payloads_exposed)}</p>
+                    <p>Effect replay enabled: {String(debuggerSnapshot.security_posture.effect_replay_enabled)}</p>
+                    <p>
+                      Framework state authoritative:{" "}
+                      {String(debuggerSnapshot.security_posture.framework_state_authoritative)}
+                    </p>
+                    <p>Secrets redacted: {String(debuggerSnapshot.security_posture.secrets_redacted)}</p>
+                  </div>
+                  <div className="mt-2">
+                    <RawJsonDisclosure
+                      label="Projection, replay, and trace export"
+                      data={{
+                        projection: debuggerSnapshot.projection_verification,
+                        replay: debuggerSnapshot.replay_sessions[0] ?? null,
+                        trace_export: debuggerSnapshot.trace_exports[0] ?? null,
+                        langgraph_checkpoints: debuggerSnapshot.engine_checkpoints.length,
+                        forge_checkpoints: debuggerSnapshot.forge_checkpoints.length
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-ink-faint">
+              Load the debugger to inspect sanitized history, projection status, replay safety, and
+              local trace export evidence.
+            </p>
+          )}
+        </div>
+      )
+    });
+  }
+
+  return (
+    <main className="relative min-h-screen bg-surface-0">
+      <div
+        className="pointer-events-none fixed inset-0 opacity-70"
+        style={{
+          background:
+            "radial-gradient(circle at 18% -10%, rgba(167,139,250,0.10), transparent 34rem), linear-gradient(180deg, var(--color-surface-0) 0%, #050507 50%)"
+        }}
+      />
+      <div className="relative mx-auto max-w-6xl space-y-4 px-6 py-8">
+        <header>
+          <Eyebrow>Forge AI control plane</Eyebrow>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-ink">
+            Identity, tenancy, and durable local workflow execution
+          </h1>
+        </header>
+
+        <IdentityBar
+          options={IDENTITY_OPTIONS}
+          selected={selected}
+          actor={actor}
+          status={status}
+          error={error || null}
+          onSelect={(subject) => void loadIdentity(subject)}
+        />
+
+        {actor ? (
+          <Panel>
+            <PanelHeading eyebrow={actor.email} title={actor.display_name} />
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[repeat(auto-fit,minmax(240px,1fr))]">
+              {actor.workspaces.map((workspace) => (
+                <div key={workspace.id} className="rounded-md border border-line bg-surface-2 p-3.5">
+                  <h3 className="text-sm font-semibold text-ink">{workspace.name}</h3>
+                  <p className="mt-1.5 text-xs text-ink-muted">Role: {workspace.role}</p>
+                  <div className="mt-2.5 flex flex-wrap gap-1">
+                    {workspace.capabilities.map((capability) => (
+                      <Tag key={capability} tone="accent">
+                        {capability}
+                      </Tag>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {actor.workspaces.length === 0 ? (
+                <div className="rounded-md border border-line bg-surface-2 p-3.5">
+                  <h3 className="text-sm font-semibold text-ink">No accessible workspaces</h3>
+                  <p className="mt-1.5 text-xs text-ink-muted">
+                    The API returned no tenant-scoped memberships — this identity is correctly isolated
+                    from every workspace.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          </Panel>
+        ) : null}
+
+        {actor && workerState ? (
+          <>
+            <WorkerStatusStrip
+              workerState={workerState}
+              recovery={recovery}
+              canRecover={canRecover}
+              onRefresh={() => void refreshOperations()}
+              onRecover={() => void scanRecovery()}
+            />
+            {canRecover && deadLetters.length > 0 ? (
+              <Panel>
+                <PanelHeading eyebrow="Recovery" title="Dead-letter recovery" />
+                <div className="mt-3 space-y-2">
+                  {deadLetters.slice(0, 3).map((deadLetter) => (
+                    <div key={deadLetter.id} className="rounded-md border border-line bg-surface-2 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-ink">{deadLetter.reason}</p>
+                          <p className="mt-1 text-xs text-ink-faint">
+                            Payload is sanitized; task input and secrets are not displayed.
+                          </p>
+                        </div>
+                        <Button
+                          variant={deadLetter.requeued_at ? "secondary" : "primary"}
+                          disabled={Boolean(deadLetter.requeued_at)}
+                          onClick={() => void retryDeadLetter(deadLetter.id)}
                         >
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-xs text-violet-200">{node.key}</span>
-                            <span className={mutedPillClass}>{node.kind}</span>
-                            {node.tool_name ? (
-                              <span className={pillClass}>
-                                {node.tool_name} v{node.tool_version}
-                              </span>
-                            ) : null}
+                          {deadLetter.requeued_at ? "Requeued" : "Requeue"}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            ) : null}
+          </>
+        ) : null}
+
+        {actor ? (
+          <Panel>
+            <PanelHeading
+              eyebrow="Offline evaluation harness"
+              title="LangChain, LangGraph, security, and failure-injection regression"
+              description="Runs deterministic model/provider cases, real Forge planner validation, real worker/agent execution, LangGraph checkpointing, and a local LangSmith-shaped export artifact. Live providers remain disabled by default."
+              action={
+                <Button
+                  variant="primary"
+                  disabled={!canRunEvaluations || evaluationRunning}
+                  onClick={() => void runEvaluationHarness()}
+                >
+                  {evaluationRunning ? "Running..." : "Run offline evaluation"}
+                </Button>
+              }
+            />
+
+            {evaluationRun ? (
+              <div className="mt-4 space-y-4">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                  <MetricCell label="Status" value={evaluationRun.status} />
+                  <MetricCell
+                    label="Cases"
+                    value={`${String(evaluationRun.summary.passed_cases)}/${String(evaluationRun.summary.total_cases)}`}
+                  />
+                  <MetricCell label="Security" value={`${String(evaluationRun.summary.security_failed_cases)} failed`} />
+                  <MetricCell label="LangSmith" value={evaluationRun.exports[0]?.status ?? "none"} />
+                  <MetricCell label="Paid calls" value={String(evaluationRun.summary.paid_provider_calls)} />
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-[1.25fr_0.75fr]">
+                  <div className="rounded-md border border-line bg-surface-2 p-3.5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold text-ink">Case results</h3>
+                      <Tag tone="accent">pass rate {String(evaluationMetrics.case_pass_rate ?? "n/a")}</Tag>
+                    </div>
+                    <div className="mt-2.5 space-y-2">
+                      {evaluationRun.case_results.map((caseResult) => (
+                        <div key={caseResult.id} className="rounded border border-line bg-surface-0 p-2.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Tag tone={caseResult.status === "passed" ? "accent" : "danger"}>{caseResult.status}</Tag>
+                            <Tag>{caseResult.category}</Tag>
+                            <Tag>{caseResult.provider}</Tag>
+                            {caseResult.engine_kind ? <Tag>{caseResult.engine_kind}</Tag> : null}
+                            {caseResult.security_critical ? <Tag tone="warn">security critical</Tag> : null}
                           </div>
-                          <p className="mt-2 text-sm font-medium text-zinc-100">{node.title}</p>
-                          <p className="mt-1 text-xs text-zinc-500">{node.rationale}</p>
+                          <p className="mt-1.5 font-mono text-xs text-accent-strong">{caseResult.case_key}</p>
+                          {caseResult.failure_message ? (
+                            <p className="mt-1.5 text-xs text-rose-300">{caseResult.failure_message}</p>
+                          ) : null}
                         </div>
                       ))}
                     </div>
-                  </article>
+                  </div>
 
-                  <article className={cardClass}>
-                    <h4 className="font-semibold text-zinc-50">Model call evidence</h4>
-                    {latestModelCall ? (
-                      <div className="mt-3 grid gap-2 text-sm text-zinc-300">
-                        <p>
-                          Provider:{" "}
-                          <span className="font-mono text-violet-200">
-                            {latestModelCall.provider}
-                          </span>
-                        </p>
-                        <p>Model: {latestModelCall.model_name}</p>
-                        <p>Status: {latestModelCall.status}</p>
-                        <p>Tokens: {latestModelCall.total_tokens}</p>
-                        <p>Estimated cost minor units: {latestModelCall.estimated_cost_minor}</p>
-                        <p>Live provider call: {String(latestModelCall.live_provider)}</p>
-                        {latestModelCall.error_type ? (
-                          <p className="text-rose-300">
-                            {latestModelCall.error_type}: {latestModelCall.error_message}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {latestPlan.edges.length > 0 ? (
-                      <div className="mt-4">
-                        <p className="text-sm font-medium text-zinc-100">Plan edges</p>
-                        <ol className="mt-2 grid gap-1 text-xs text-zinc-400">
-                          {latestPlan.edges.map((edge) => (
-                            <li key={`${edge.from}-${edge.to}`}>
-                              <span className="font-mono text-violet-200">{edge.from}</span> →{" "}
-                              <span className="font-mono text-violet-200">{edge.to}</span>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    ) : null}
-                  </article>
-                </div>
-              ) : (
-                <p className="mt-4 text-sm text-zinc-500">
-                  Create a run, then generate a structured plan to inspect persisted planner
-                  output.
-                </p>
-              )}
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
-              <h3 className="font-semibold text-zinc-50">Execution events</h3>
-              <ol className="mt-3 grid gap-2 text-sm text-zinc-300">
-                {events.map((event) => (
-                  <li key={event.id}>
-                    <span className="text-zinc-500">#{event.sequence}</span>{" "}
-                    <span className="text-violet-200">{event.event_type}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm text-zinc-400">Execution debugger and safe replay</p>
-                  <h3 className="mt-1 font-semibold text-zinc-50">
-                    Explain the run from event history without turning replay into authority
-                  </h3>
-                  <p className="mt-2 text-sm text-zinc-400">
-                    The debugger correlates execution events, model calls, tool invocations,
-                    evidence, Forge checkpoints, and LangGraph checkpoint mirrors. Replay is
-                    simulation-only by default; unsafe effect replay is blocked.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className={`${buttonBase} ${debuggerSnapshot ? "" : activeButton}`}
-                    disabled={debuggerRunning}
-                    onClick={() => void loadDebugger()}
-                  >
-                    {debuggerRunning ? "Working..." : "Load debugger"}
-                  </button>
-                  <button
-                    className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
-                    disabled={!canRecover || debuggerRunning}
-                    onClick={() => void runProjectionVerification()}
-                  >
-                    Verify projection
-                  </button>
-                  <button
-                    className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
-                    disabled={!canRecover || debuggerRunning}
-                    onClick={() => void runReplay("simulation")}
-                  >
-                    Simulation replay
-                  </button>
-                  <button
-                    className={buttonBase}
-                    disabled={!canRecover || debuggerRunning}
-                    onClick={() => void runReplay("effect_replay")}
-                  >
-                    Prove effect replay blocked
-                  </button>
-                  <button
-                    className={`${buttonBase} ${canRecover ? activeButton : "opacity-50"}`}
-                    disabled={!canRecover || debuggerRunning}
-                    onClick={() => void exportLocalTrace()}
-                  >
-                    Export local trace
-                  </button>
+                  <div className="rounded-md border border-line bg-surface-2 p-3.5">
+                    <h3 className="text-sm font-semibold text-ink">Framework evidence</h3>
+                    <div className="mt-2 space-y-1 text-xs text-ink-muted">
+                      <p>LangChain exercised: {String(evaluationRun.summary.langchain_provider_exercised)}</p>
+                      <p>LangGraph exercised: {String(evaluationRun.summary.langgraph_exercised)}</p>
+                      <p>Live LangSmith export: {String(evaluationRun.summary.langsmith_live_export)}</p>
+                      <p>External integrations: {evaluationRun.external_integrations}</p>
+                    </div>
+                    <div className="mt-2.5">
+                      <RawJsonDisclosure
+                        label="Metrics and export artifact"
+                        data={{ metrics: evaluationMetrics, langsmith_export: evaluationRun.exports[0]?.artifact }}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
+            ) : (
+              <p className="mt-4 text-sm text-ink-faint">
+                Select Alice Admin, then run the offline suite to inspect persisted case results, metrics,
+                and export evidence.
+              </p>
+            )}
+          </Panel>
+        ) : null}
 
-              {debuggerSnapshot ? (
-                <div className="mt-4 grid gap-4">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                    <article className={cardClass}>
-                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Events</p>
-                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                        {debuggerSnapshot.timeline.events.length}
-                      </p>
-                    </article>
-                    <article className={cardClass}>
-                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Models</p>
-                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                        {debuggerSnapshot.model_calls.length}
-                      </p>
-                    </article>
-                    <article className={cardClass}>
-                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">Tools</p>
-                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                        {debuggerSnapshot.tool_invocations.length}
-                      </p>
-                    </article>
-                    <article className={cardClass}>
-                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">
-                        Projection
-                      </p>
-                      <p className="mt-2 text-2xl font-semibold text-zinc-50">
-                        {debuggerSnapshot.projection_verification?.status ?? "not run"}
-                      </p>
-                    </article>
-                    <article className={cardClass}>
-                      <p className="text-xs uppercase tracking-[0.2em] text-violet-300">
-                        Paid calls
-                      </p>
-                      <p className="mt-2 text-2xl font-semibold text-zinc-50">0</p>
-                    </article>
+        {actor && tools.length > 0 ? (
+          <Panel>
+            <PanelHeading
+              eyebrow="Typed tool catalog"
+              title="Code-registered tools with versioned schemas and risk labels"
+              description="This catalog is read-only. The browser can inspect registered tools, but it cannot execute arbitrary tool calls."
+            />
+            <div className="mt-4 grid grid-cols-1 gap-2.5 md:grid-cols-3">
+              {tools.map((tool) => (
+                <div key={tool.id} className="rounded-md border border-line bg-surface-2 p-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Tag tone="accent">v{tool.version}</Tag>
+                    <Tag>{tool.risk}</Tag>
+                    <Tag>{tool.status}</Tag>
                   </div>
-
-                  <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-                    <article className={cardClass}>
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <h4 className="font-semibold text-zinc-50">Causal timeline</h4>
-                        <span className={pillClass}>
-                          cursor {debuggerSnapshot.timeline.next_cursor ? "available" : "empty"}
-                        </span>
-                      </div>
-                      <ol className="mt-3 grid gap-2">
-                        {debuggerSnapshot.timeline.events.slice(-8).map((debugEvent) => (
-                          <li
-                            className="rounded-xl border border-zinc-800 bg-black/30 p-3"
-                            key={debugEvent.id}
-                          >
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className={pillClass}>#{debugEvent.sequence}</span>
-                              <span className="font-mono text-xs text-violet-200">
-                                {debugEvent.event_type}
-                              </span>
-                              <span className={mutedPillClass}>v{debugEvent.schema_version}</span>
-                              <span className={mutedPillClass}>
-                                known {String(debugEvent.catalog_known)}
-                              </span>
-                            </div>
-                            <p className="mt-2 break-all font-mono text-xs text-zinc-500">
-                              payload hash {debugEvent.payload_hash?.slice(0, 24)}… · correlation{" "}
-                              {debugEvent.correlation_id.slice(0, 16)}…
-                            </p>
-                          </li>
-                        ))}
-                      </ol>
-                    </article>
-
-                    <article className={cardClass}>
-                      <h4 className="font-semibold text-zinc-50">Replay and trace evidence</h4>
-                      <div className="mt-3 grid gap-2 text-sm text-zinc-300">
-                        <p>
-                          Raw payloads exposed:{" "}
-                          {String(debuggerSnapshot.security_posture.raw_payloads_exposed)}
-                        </p>
-                        <p>
-                          Effect replay enabled:{" "}
-                          {String(debuggerSnapshot.security_posture.effect_replay_enabled)}
-                        </p>
-                        <p>
-                          Framework state authoritative:{" "}
-                          {String(debuggerSnapshot.security_posture.framework_state_authoritative)}
-                        </p>
-                        <p>
-                          Secrets redacted:{" "}
-                          {String(debuggerSnapshot.security_posture.secrets_redacted)}
-                        </p>
-                      </div>
-                      <pre className="mt-4 max-h-80 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
-                        {JSON.stringify(
-                          {
-                            projection: debuggerSnapshot.projection_verification,
-                            replay: debuggerSnapshot.replay_sessions[0] ?? null,
-                            trace_export: debuggerSnapshot.trace_exports[0] ?? null,
-                            langgraph_checkpoints:
-                              debuggerSnapshot.engine_checkpoints.length,
-                            forge_checkpoints: debuggerSnapshot.forge_checkpoints.length
-                          },
-                          null,
-                          2
-                        )}
-                      </pre>
-                    </article>
-                  </div>
+                  <h3 className="mt-2 text-sm font-semibold text-ink">{tool.display_name}</h3>
+                  <p className="mt-1.5 text-xs text-ink-muted">{tool.description}</p>
+                  <p className="mt-2 break-all font-mono text-[11px] text-accent-strong">{tool.name}</p>
                 </div>
-              ) : (
-                <p className="mt-4 text-sm text-zinc-500">
-                  Create or load a run, then open the debugger to inspect sanitized history,
-                  projection status, replay safety, and local trace export evidence.
+              ))}
+            </div>
+          </Panel>
+        ) : null}
+
+        {actor && selectedWorkflow ? (
+          <WorkflowPicker
+            workflows={workflows}
+            selectedWorkflow={selectedWorkflow}
+            selectedWorkflowId={selectedWorkflowId}
+            selectedEngine={selectedEngine}
+            canCreateRun={Boolean(canCreateRun)}
+            onSelectWorkflow={(workflowId) => {
+              setSelectedWorkflowId(workflowId);
+              setRun(null);
+              setTasks([]);
+              setEvents([]);
+              setToolInvocations([]);
+              setEvidenceItems([]);
+              setPlans([]);
+              setModelCalls([]);
+              setAgentIterations([]);
+              setEngineCheckpoints([]);
+              setDebuggerSnapshot(null);
+              setSelectedTaskId(null);
+            }}
+            onSelectEngine={setSelectedEngine}
+            onCreateRun={() => void createDeterministicRun()}
+          />
+        ) : null}
+
+        {run ? (
+          <Panel>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <Eyebrow>Current run</Eyebrow>
+                <div className="mt-1 flex flex-wrap items-center gap-2.5">
+                  <h2 className="text-base font-semibold tracking-tight text-ink">{run.objective}</h2>
+                  <StateBadge state={toExecutionState(run.status)} label={run.status} />
+                </div>
+                <p className="mt-1.5 text-xs text-ink-muted">
+                  Version {run.version} · Engine{" "}
+                  <span className="font-mono text-accent-strong">{run.engine_kind}</span> · {run.engine_version}
                 </p>
-              )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <Button size="sm" onClick={() => void refreshCurrentRun()}>
+                  Refresh
+                </Button>
+                <Button
+                  size="sm"
+                  variant={run.status === "running" ? "danger" : "secondary"}
+                  disabled={run.status !== "running"}
+                  onClick={() => void cancelCurrentRun()}
+                >
+                  Cancel run
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={run.status !== "running"}
+                  onClick={() => void advanceDeterministicRun()}
+                >
+                  Manual fallback advance
+                </Button>
+              </div>
             </div>
 
-            {toolInvocations.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
-                <h3 className="font-semibold text-zinc-50">Tool invocation ledger</h3>
-                <div className="mt-3 grid gap-2">
-                  {toolInvocations.map((invocation) => (
-                    <article
-                      className="rounded-xl border border-zinc-800 bg-[#0d0d0f] p-3"
-                      key={invocation.id}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="font-mono text-sm text-violet-200">
-                            {invocation.tool_name} v{invocation.tool_version}
-                          </p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            action hash {invocation.action_hash.slice(0, 16)}… · idempotency{" "}
-                            {invocation.idempotency_key}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <span className={pillClass}>{invocation.status}</span>
-                          <span className={mutedPillClass}>{invocation.risk}</span>
-                        </div>
-                      </div>
-                      {invocation.error_type ? (
-                        <p className="mt-2 text-sm text-rose-300">
-                          {invocation.error_type}: {invocation.error_message}
-                        </p>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
+            <div className="mt-4">
+              <ExecutionGraph
+                workflow={selectedWorkflow ?? { steps: [], edges: [] }}
+                tasks={tasks}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={setSelectedTaskId}
+              />
+            </div>
+
+            {selectedTask ? (
+              <p className="mt-2 text-xs text-ink-faint">
+                Selected step <span className="font-mono text-accent-strong">{selectedTask.step_key}</span> —{" "}
+                {selectedTask.name}, status {selectedTask.status}.
+              </p>
+            ) : null}
+
+            {pendingRunApproval ? (
+              <div className="mt-4">
+                <ApprovalPanel
+                  approval={pendingRunApproval}
+                  actions={
+                    <>
+                      <Button size="sm" onClick={() => void tryApproveWithCurrentActor(pendingRunApproval)}>
+                        Try current actor
+                      </Button>
+                      <Button size="sm" variant="primary" onClick={() => void approveAsAva(pendingRunApproval)}>
+                        Approve as Ava
+                      </Button>
+                      <Button size="sm" variant="danger" onClick={() => void rejectAsAva(pendingRunApproval)}>
+                        Reject as Ava
+                      </Button>
+                    </>
+                  }
+                />
               </div>
             ) : null}
 
-            {evidenceItems.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
-                <h3 className="font-semibold text-zinc-50">Evidence provenance</h3>
-                <div className="mt-3 grid gap-2">
-                  {evidenceItems.map((item) => (
-                    <article
-                      className="rounded-xl border border-zinc-800 bg-[#0d0d0f] p-3"
-                      key={item.id}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="font-mono text-sm text-violet-200">{item.source_name}</p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            {item.source_type} · content hash {item.content_hash.slice(0, 16)}…
-                          </p>
-                        </div>
-                        <span
-                          className={
-                            item.trust_label === "untrusted_tool_output"
-                              ? "rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-xs text-amber-200"
-                              : pillClass
-                          }
-                        >
-                          {item.trust_label}
-                        </span>
-                      </div>
-                      <pre className="mt-3 max-h-36 overflow-auto rounded-xl border border-zinc-800 bg-black/40 p-3 text-xs text-zinc-300">
-                        {JSON.stringify(item.summary, null, 2)}
-                      </pre>
-                    </article>
-                  ))}
-                </div>
+            {inspectorTabs.length > 0 ? (
+              <div className="mt-5 border-t border-line pt-4">
+                <Inspector tabs={inspectorTabs} />
               </div>
             ) : null}
-          </section>
+          </Panel>
         ) : null}
       </div>
     </main>
