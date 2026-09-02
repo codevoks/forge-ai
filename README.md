@@ -12,6 +12,12 @@ MODEL PROPOSES  →  FORGE VALIDATES  →  POLICY / AUTHORITY ENFORCES  →  ACT
 
 That one line is the whole design philosophy. Everything below is how it's actually built.
 
+## Demo
+
+<!-- Product demo video/GIF will be inserted here after final UI polish. -->
+
+A recorded walkthrough will live here: an objective becoming a durable run, specialists fanning out and back in, a high-risk action pausing for exact-action human approval and resuming once granted, and a cross-tenant request failing closed — the same run lifecycle, authority boundary, and multi-agent coordination described below, shown end to end. Until then, every one of those scenarios is fully reproducible locally in under two minutes — see [Try it locally](#try-it-locally).
+
 ## Why Forge exists
 
 Most "AI agent" projects are a prompt, a tool-calling loop, and a hope that the model behaves. That's fine for a demo; it's not fine for anything a business would run unattended. Forge exists to answer the boring, hard questions that separate a wrapper from a system: What happens when a worker crashes mid-task? Can the same effect run twice? Who is actually allowed to approve a risky action, and can that approval be reused for a slightly different one? What stops a tool's output — or a compromised MCP server's — from becoming an instruction? Forge answers each of these with real, tested mechanisms, not a disclaimer.
