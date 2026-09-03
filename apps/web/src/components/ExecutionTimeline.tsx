@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ExecutionEvent } from "../lib/api";
-import { Eyebrow, Mono } from "./primitives";
+import { CopyableHash, Eyebrow, Mono } from "./primitives";
 
 type EventGroup = {
   key: string;
@@ -97,8 +97,11 @@ export function ExecutionTimeline({ events }: { events: ExecutionEvent[] }) {
                 <div className="animate-rise space-y-2 border-t border-line px-3 py-2.5">
                   {group.events.map((event) => (
                     <div key={event.id} className="rounded border border-line bg-surface-0 px-2.5 py-2">
-                      <div className="flex items-center justify-between text-[11px] text-ink-faint">
-                        <span>seq {event.sequence}</span>
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-ink-faint">
+                        <span className="flex items-center gap-1">
+                          seq {event.sequence} · correlation{" "}
+                          <CopyableHash value={event.correlation_id} length={12} label="correlation ID" />
+                        </span>
                         <span>{new Date(event.created_at).toLocaleTimeString()}</span>
                       </div>
                       <pre className="mt-1 max-h-32 overflow-auto font-mono text-[11px] text-ink-muted">

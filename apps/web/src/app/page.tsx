@@ -50,6 +50,7 @@ import {
   type WorkerState,
   type WorkflowVersion
 } from "../lib/api";
+import { downloadExecutionReportPdf } from "../lib/pdfReport";
 import { toExecutionState } from "../lib/status";
 import { AgentBudgetMeter } from "../components/AgentBudgetMeter";
 import { ApprovalPanel } from "../components/ApprovalPanel";
@@ -59,6 +60,8 @@ import { IdentityBar, type IdentityOption } from "../components/IdentityBar";
 import { Inspector, RawJsonDisclosure, type InspectorTab } from "../components/Inspector";
 import {
   Button,
+  CopyableHash,
+  CopyButton,
   Eyebrow,
   MetricCell,
   Panel,
@@ -128,6 +131,7 @@ export default function Home() {
   const [evaluationRunning, setEvaluationRunning] = useState(false);
   const [debuggerSnapshot, setDebuggerSnapshot] = useState<DebuggerSnapshot | null>(null);
   const [debuggerRunning, setDebuggerRunning] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   async function loadIdentity(subject: DemoSubject) {
@@ -446,6 +450,32 @@ export default function Home() {
     }
   }
 
+  function exportExecutionReport() {
+    if (!run) {
+      return;
+    }
+    setError("");
+    setExportingReport(true);
+    try {
+      downloadExecutionReportPdf({
+        actor: actor ? { display_name: actor.display_name, email: actor.email } : null,
+        run,
+        tasks,
+        events,
+        toolInvocations,
+        evidenceItems,
+        approvals: runApprovals,
+        agentIterations
+      });
+      setStatus("Execution report PDF generated from the currently loaded run state.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unknown error");
+      setStatus("Execution report export failed safely; no run state was changed.");
+    } finally {
+      setExportingReport(false);
+    }
+  }
+
   async function retryDeadLetter(deadLetterId: string) {
     if (!token) {
       return;
@@ -757,9 +787,9 @@ export default function Home() {
                         <p className="font-mono text-sm text-accent-strong">
                           {invocation.tool_name} v{invocation.tool_version}
                         </p>
-                        <p className="mt-0.5 text-xs text-ink-faint">
-                          action hash {invocation.action_hash.slice(0, 16)}… · idempotency{" "}
-                          {invocation.idempotency_key}
+                        <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-ink-faint">
+                          action hash <CopyableHash value={invocation.action_hash} length={16} label="action hash" /> ·
+                          idempotency <CopyableHash value={invocation.idempotency_key} length={16} label="idempotency key" />
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
@@ -795,8 +825,9 @@ export default function Home() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="font-mono text-sm text-accent-strong">{item.source_name}</p>
-                        <p className="mt-0.5 text-xs text-ink-faint">
-                          {item.source_type} · content hash {item.content_hash.slice(0, 16)}…
+                        <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-ink-faint">
+                          {item.source_type} · content hash{" "}
+                          <CopyableHash value={item.content_hash} length={16} label="content hash" />
                         </p>
                       </div>
                       <Tag tone={item.trust_label === "untrusted_tool_output" ? "warn" : "accent"}>
@@ -921,9 +952,15 @@ export default function Home() {
                           <Tag>v{debugEvent.schema_version}</Tag>
                           <Tag>known {String(debugEvent.catalog_known)}</Tag>
                         </div>
-                        <p className="mt-1 break-all font-mono text-[11px] text-ink-faint">
-                          payload hash {debugEvent.payload_hash?.slice(0, 24)}… · correlation{" "}
-                          {debugEvent.correlation_id.slice(0, 16)}…
+                        <p className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-ink-faint">
+                          payload hash{" "}
+                          {debugEvent.payload_hash ? (
+                            <CopyableHash value={debugEvent.payload_hash} length={24} label="payload hash" />
+                          ) : (
+                            "none"
+                          )}{" "}
+                          · correlation{" "}
+                          <CopyableHash value={debugEvent.correlation_id} length={16} label="correlation ID" />
                         </p>
                       </div>
                     ))}
@@ -1201,9 +1238,10 @@ export default function Home() {
                   <h2 className="text-base font-semibold tracking-tight text-ink">{run.objective}</h2>
                   <StateBadge state={toExecutionState(run.status)} label={run.status} />
                 </div>
-                <p className="mt-1.5 text-xs text-ink-muted">
+                <p className="mt-1.5 flex flex-wrap items-center gap-1 text-xs text-ink-muted">
                   Version {run.version} · Engine{" "}
-                  <span className="font-mono text-accent-strong">{run.engine_kind}</span> · {run.engine_version}
+                  <span className="font-mono text-accent-strong">{run.engine_kind}</span> · {run.engine_version} ·
+                  Run <CopyableHash value={run.id} length={12} label="run ID" />
                 </p>
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -1225,6 +1263,15 @@ export default function Home() {
                 >
                   Manual fallback advance
                 </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={exportingReport}
+                  onClick={() => exportExecutionReport()}
+                  title="Export a PDF summary of this run's currently loaded state"
+                >
+                  {exportingReport ? "Preparing PDF..." : "Export execution report"}
+                </Button>
               </div>
             </div>
 
@@ -1238,9 +1285,10 @@ export default function Home() {
             </div>
 
             {selectedTask ? (
-              <p className="mt-2 text-xs text-ink-faint">
+              <p className="mt-2 flex flex-wrap items-center gap-1 text-xs text-ink-faint">
                 Selected step <span className="font-mono text-accent-strong">{selectedTask.step_key}</span> —{" "}
-                {selectedTask.name}, status {selectedTask.status}.
+                {selectedTask.name}, status {selectedTask.status}. Task{" "}
+                <CopyableHash value={selectedTask.id} length={12} label="task ID" />
               </p>
             ) : null}
 

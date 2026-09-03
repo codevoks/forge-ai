@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { CopyButton } from "./primitives";
 
 export type InspectorTab = {
   key: string;
@@ -51,9 +52,14 @@ export function RawJsonDisclosure({ label, data }: { label: string; data: unknow
         <span>{open ? "Hide raw JSON" : "Show raw JSON"}</span>
       </button>
       {open ? (
-        <pre className="max-h-72 overflow-auto border-t border-line px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink-muted">
-          {JSON.stringify(data, null, 2)}
-        </pre>
+        <div className="border-t border-line">
+          <div className="flex justify-end px-2 pt-2">
+            <CopyButton value={JSON.stringify(data, null, 2)} label="Copy JSON" />
+          </div>
+          <pre className="max-h-72 overflow-auto px-3 pb-2.5 pt-1 font-mono text-[11px] leading-relaxed text-ink-muted">
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        </div>
       ) : null}
     </div>
   );

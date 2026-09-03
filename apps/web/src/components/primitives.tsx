@@ -1,5 +1,20 @@
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { copyToClipboard } from "../lib/clipboard";
 import { STATE_BADGE_CLASS, STATE_LABEL, type ExecutionState } from "../lib/status";
+
+function useCopyFeedback(value: string, resetMs = 1500) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  async function handleCopy() {
+    const result = await copyToClipboard(value);
+    setState(result);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => setState("idle"), resetMs);
+  }
+
+  return { state, handleCopy };
+}
 
 export function Panel({
   children,
@@ -140,15 +155,42 @@ export function Mono({ children, className = "" }: { children: ReactNode; classN
   return <span className={`font-mono text-[12px] text-ink-muted ${className}`}>{children}</span>;
 }
 
-export function CopyableHash({ value, length = 16 }: { value: string; length?: number }) {
+export function CopyableHash({
+  value,
+  length = 16,
+  label
+}: {
+  value: string;
+  length?: number;
+  label?: string;
+}) {
+  const { state, handleCopy } = useCopyFeedback(value);
   return (
     <button
-      onClick={() => void navigator.clipboard?.writeText(value)}
-      title="Copy full value"
-      className="group inline-flex items-center gap-1 rounded font-mono text-[12px] text-ink-faint transition hover:text-accent-strong"
+      type="button"
+      onClick={() => void handleCopy()}
+      title={state === "idle" ? value : undefined}
+      aria-label={label ? `Copy ${label} to clipboard` : "Copy to clipboard"}
+      className={`group inline-flex items-center gap-1 rounded font-mono text-[12px] transition ${
+        state === "copied"
+          ? "text-emerald-300"
+          : state === "failed"
+            ? "text-rose-300"
+            : "text-ink-faint hover:text-accent-strong"
+      }`}
     >
-      {value.slice(0, length)}
-      <span className="opacity-0 transition group-hover:opacity-100">⧉</span>
+      {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : value.slice(0, length)}
+      {state === "idle" ? <span className="opacity-0 transition group-hover:opacity-100">⧉</span> : null}
     </button>
+  );
+}
+
+/** A small labeled copy affordance for values without a natural hash-style display (e.g. "Copy JSON"). */
+export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+  const { state, handleCopy } = useCopyFeedback(value);
+  return (
+    <Button size="sm" variant="ghost" onClick={() => void handleCopy()} title={label}>
+      {state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : label}
+    </Button>
   );
 }
