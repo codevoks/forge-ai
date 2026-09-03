@@ -14,6 +14,10 @@ That one line is the whole design philosophy. Everything below is how it's actua
 
 ## Demo
 
+![Forge AI web UI showing a real, completed Multi-Agent Investigation Demo run: three specialist tasks and a synthesizer task all in a terminal succeeded state on the execution graph, and the Approval history panel showing the resolved human-approval decision for the run's one simulated_effect tool call.](docs/assets/forge-ai-demo.png)
+
+*A real local run captured directly from the running application — not a mockup. Identity: Alice Admin. Workflow: `Multi-Agent Investigation Demo`, custom engine (this run did not use LangGraph). Model path: Forge's deterministic, zero-cost fake-model provider — no live model or paid API was called. Three specialists executed in parallel and fed a synthesizer task; the `ticket.create_simulated` tool call was gated behind Forge's exact-action human approval before it could execute, Ava Approver approved it, and the run completed with all four tasks in a terminal `succeeded` state — shown here in the Approval history panel with its action hash, requester, and consumed status.*
+
 <!-- Product demo video/GIF will be inserted here after final UI polish. -->
 
 A recorded walkthrough will live here: an objective becoming a durable run, specialists fanning out and back in, a high-risk action pausing for exact-action human approval and resuming once granted, and a cross-tenant request failing closed — the same run lifecycle, authority boundary, and multi-agent coordination described below, shown end to end. Until then, every one of those scenarios is fully reproducible locally in under two minutes — see [Try it locally](#try-it-locally).
